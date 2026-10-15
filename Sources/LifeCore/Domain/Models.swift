@@ -55,7 +55,7 @@ public struct EconomyCard: Codable, Equatable, Sendable {
 
 // MARK: Money sources
 
-public enum SourceType: String, Codable, Sendable {
+public enum SourceType: String, Codable, Sendable, CaseIterable {
     case opening
     case wage
     case sideHustle = "side_hustle"

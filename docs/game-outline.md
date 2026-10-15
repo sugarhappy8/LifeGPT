@@ -131,17 +131,18 @@ In this order, trimmed from the bottom when over budget (the budget is set by th
 
 ## 7. AI output contract
 
-Strict JSON, with the `resolution` block first so the engine can validate it **before the prose is shown or streamed**. One repair retry on bad JSON or rejected changes.
+Strict JSON, with the `resolution` block first so the engine can validate it **before the prose is shown or streamed**. One repair retry on bad JSON or rejected changes. Amounts are integer minor units (`amount_minor`, for example cents). `income_streams` is how a job or self-employment income starts, changes, or ends (wages are then paid by the engine, §4). `path_updates` (opportunity paths) joins the contract in build phase 6.
 
 ```
 {
   "resolution": {
     "zoom": "scene | summary | montage",
     "time_advance": { "unit": "days|months|years", "amount": 2 },
-    "money": [ { "source_type": "side_hustle", "amount": 85,
+    "money": [ { "source_type": "side_hustle", "amount_minor": 8500,
                  "reason": "sold six hand-carved spoons at the Saturday market",
                  "income_stream": "spoon-stall", "fate_used": 61 } ],
-    "path_updates": [ ... ],
+    "income_streams": [ { "action": "start|change|end", "name": "hardware store",
+                          "kind": "wage|self_employment", "tier": "skilled", "monthly_minor": 300000 } ],
     "decisions": [ { "summary": "...", "choice": "...", "importance": "major|minor" } ],
     "life_state_changes": [ { "key": "residence", "value": "..." } ],
     "cast_updates": [ { "name": "...", "relation": "...", "notes": "..." } ],
