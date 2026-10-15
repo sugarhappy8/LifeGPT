@@ -78,6 +78,7 @@ public final class TurnProcessor {
                 throw TurnError.narratorFailed(String(describing: error))
             }
         }
+        result.output = Self.normalized(result.output)
         inputTokens += result.inputTokens
         outputTokens += result.outputTokens
 
@@ -86,18 +87,23 @@ public final class TurnProcessor {
         allRejections += evaluation.rejections
         if !evaluation.rejections.isEmpty && !repairUsed {
             repairUsed = true
+            var second: NarratorResult?
             do {
-                let second = try await narrator.repair(request, rejections: evaluation.rejections)
-                inputTokens += second.inputTokens
-                outputTokens += second.outputTokens
-                let secondEvaluation = try evaluate(second.output, truth: truth, fate: fateRoll)
-                allRejections += secondEvaluation.rejections
-                result = second
-                evaluation = secondEvaluation
+                second = try await narrator.repair(request, rejections: evaluation.rejections)
             } catch NarratorError.refused {
                 throw TurnError.refused
-            } catch is NarratorError {
-                // Repair failed: keep the first output and drop what was rejected.
+            } catch {
+                // Bad output or a network error: keep the first output and drop what was rejected.
+                allRejections.append("repair failed: \(String(String(describing: error).prefix(200)))")
+            }
+            if var repaired = second {
+                repaired.output = Self.normalized(repaired.output)
+                inputTokens += repaired.inputTokens
+                outputTokens += repaired.outputTokens
+                let repairedEvaluation = try evaluate(repaired.output, truth: truth, fate: fateRoll)
+                allRejections += repairedEvaluation.rejections
+                result = repaired
+                evaluation = repairedEvaluation
             }
         }
 
@@ -170,10 +176,13 @@ public final class TurnProcessor {
             }
         }
         let lastWindfall = try store.lastLedgerDate(source: .windfall).map { evaluation.newDate.daysSince($0) }
+        let lastGifts = [try store.lastLedgerDate(source: .gift), try store.lastLedgerDate(source: .inheritance)]
+        let daysSinceAnyGift = lastGifts.compactMap { $0 }.max().map { evaluation.newDate.daysSince($0) }
         let context = MoneyContext(economy: truth.economy, familyTier: truth.character.familyWealthTier,
                                    balanceMinor: projectedBalance, elapsedDays: days, fate: fate,
                                    castNames: Set(truth.cast.map(\.name)), daysSinceLastWindfall: lastWindfall,
-                                   daysSinceLastGiftByGiver: giftGaps, rules: rules)
+                                   daysSinceLastGiftByGiver: giftGaps, daysSinceLastAnyGift: daysSinceAnyGift,
+                                   rules: rules)
         let moneyVerdicts = MoneyValidator.validate(resolution.money, in: context)
         for (entry, verdict) in zip(resolution.money, moneyVerdicts) {
             switch verdict {
@@ -183,6 +192,17 @@ public final class TurnProcessor {
             }
         }
         return evaluation
+    }
+
+    /// Trims the names the narrator invents, so padding or stray spaces cannot
+    /// create a second "person" or a second giver.
+    private static func normalized(_ output: TurnOutput) -> TurnOutput {
+        func trimmed(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var out = output
+        out.resolution.castUpdates = out.resolution.castUpdates.map { var u = $0; u.name = trimmed(u.name); return u }
+        out.resolution.money = out.resolution.money.map { var m = $0; m.counterparty = m.counterparty.map(trimmed); return m }
+        out.resolution.incomeStreams = out.resolution.incomeStreams.map { var c = $0; c.name = trimmed(c.name); return c }
+        return out
     }
 
     /// At most 20 years may pass in one turn.

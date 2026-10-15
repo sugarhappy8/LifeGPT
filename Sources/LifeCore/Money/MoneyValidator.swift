@@ -10,11 +10,14 @@ public struct MoneyContext: Sendable {
     /// nil means there has never been a windfall.
     public var daysSinceLastWindfall: Int?
     public var daysSinceLastGiftByGiver: [String: Int]
+    /// Days since the last gift or inheritance from anyone; nil means never.
+    public var daysSinceLastAnyGift: Int?
     public var rules: MoneyRules
 
     public init(economy: EconomyCard, familyTier: WealthTier, balanceMinor: Int64, elapsedDays: Int,
                 fate: Int, castNames: Set<String>, daysSinceLastWindfall: Int? = nil,
-                daysSinceLastGiftByGiver: [String: Int] = [:], rules: MoneyRules = .v1) {
+                daysSinceLastGiftByGiver: [String: Int] = [:], daysSinceLastAnyGift: Int? = nil,
+                rules: MoneyRules = .v1) {
         self.economy = economy
         self.familyTier = familyTier
         self.balanceMinor = balanceMinor
@@ -23,6 +26,7 @@ public struct MoneyContext: Sendable {
         self.castNames = castNames
         self.daysSinceLastWindfall = daysSinceLastWindfall
         self.daysSinceLastGiftByGiver = daysSinceLastGiftByGiver
+        self.daysSinceLastAnyGift = daysSinceLastAnyGift
         self.rules = rules
     }
 }
@@ -41,26 +45,40 @@ public enum MoneyValidator {
     /// One verdict per entry, in order. A running balance and the per-turn
     /// windfall and gift limits carry across entries.
     public static func validate(_ entries: [ProposedMoneyEntry], in ctx: MoneyContext) -> [MoneyVerdict] {
-        var balance = ctx.balanceMinor
-        var windfallUsed = false
-        var giftersThisTurn = Set<String>()
+        var state = TurnState(balance: ctx.balanceMinor)
         return entries.map { entry in
-            let verdict = check(entry, ctx: ctx, balance: balance, windfallUsed: windfallUsed,
-                                giftersThisTurn: giftersThisTurn)
+            let verdict = check(entry, ctx: ctx, state: state)
             if verdict == .accepted {
-                balance = saturatingAdd(balance, entry.amountMinor)
-                if entry.sourceType == .windfall { windfallUsed = true }
-                if entry.sourceType == .gift || entry.sourceType == .inheritance,
-                   let giver = entry.counterparty {
-                    giftersThisTurn.insert(giver.lowercased())
+                state.balance = saturatingAdd(state.balance, entry.amountMinor)
+                switch entry.sourceType {
+                case .windfall:
+                    state.windfallUsed = true
+                    state.gainsTotal = saturatingAdd(state.gainsTotal, entry.amountMinor)
+                case .gift, .inheritance:
+                    state.giftUsed = true
+                    state.gainsTotal = saturatingAdd(state.gainsTotal, entry.amountMinor)
+                case .sideHustle:
+                    state.sideHustleUsed = saturatingAdd(state.sideHustleUsed, entry.amountMinor)
+                    state.gainsTotal = saturatingAdd(state.gainsTotal, entry.amountMinor)
+                default:
+                    break
                 }
             }
             return verdict
         }
     }
 
-    private static func check(_ e: ProposedMoneyEntry, ctx: MoneyContext, balance: Int64,
-                              windfallUsed: Bool, giftersThisTurn: Set<String>) -> MoneyVerdict {
+    /// What earlier entries in the same turn have already used up, so a claim
+    /// cannot be split into many small entries to get past a per-entry limit.
+    private struct TurnState {
+        var balance: Int64
+        var windfallUsed = false
+        var giftUsed = false
+        var sideHustleUsed: Int64 = 0
+        var gainsTotal: Int64 = 0
+    }
+
+    private static func check(_ e: ProposedMoneyEntry, ctx: MoneyContext, state: TurnState) -> MoneyVerdict {
         let economy = ctx.economy, rules = ctx.rules
 
         if e.amountMinor == 0 { return .rejected("zero amount") }
@@ -79,6 +97,11 @@ public enum MoneyValidator {
             return .rejected("exceeds the plausible bound for a single entry (\(Money.format(bound, economy: economy)))")
         }
 
+        let isGain = [SourceType.sideHustle, .gift, .inheritance, .windfall].contains(e.sourceType)
+        if isGain, saturatingAdd(state.gainsTotal, e.amountMinor) > bound {
+            return .rejected("exceeds the plausible bound for one turn's total gains (\(Money.format(bound, economy: economy)))")
+        }
+
         switch e.sourceType {
         case .opening, .wage, .investment, .livingCost:
             return .rejected("engine-only source: \(e.sourceType.rawValue) is paid or charged by the game, not proposed by the narrator")
@@ -88,8 +111,9 @@ public enum MoneyValidator {
 
         case .sideHustle:
             let cap = rules.sideHustleCap(economy: economy, elapsedDays: ctx.elapsedDays)
-            if e.amountMinor > cap {
-                return .rejected("over the side-hustle cap of \(Money.format(cap, economy: economy)) for this period")
+            if saturatingAdd(state.sideHustleUsed, e.amountMinor) > cap {
+                return .rejected("over the side-hustle cap of \(Money.format(cap, economy: economy)) for this period "
+                                 + "(\(Money.format(state.sideHustleUsed, economy: economy)) already used this turn)")
             }
 
         case .gift, .inheritance:
@@ -100,8 +124,9 @@ public enum MoneyValidator {
             if e.amountMinor > cap {
                 return .rejected("over the gift cap of \(Money.format(cap, economy: economy)) for this family")
             }
-            if giftersThisTurn.contains(giver.lowercased()) {
-                return .rejected("gap: already received a gift from \(giver) this turn")
+            if state.giftUsed { return .rejected("gap: only one gift or inheritance per turn") }
+            if let days = ctx.daysSinceLastAnyGift, days < rules.giftMinGapDays {
+                return .rejected("gap: the last gift from anyone was \(days) days ago (minimum \(rules.giftMinGapDays))")
             }
             if let days = ctx.daysSinceLastGiftByGiver.first(where: { $0.key.caseInsensitiveCompare(giver) == .orderedSame })?.value,
                days < rules.giftMinGapDays {
@@ -116,14 +141,14 @@ public enum MoneyValidator {
             if e.amountMinor > cap {
                 return .rejected("over the windfall cap of \(Money.format(cap, economy: economy))")
             }
-            if windfallUsed { return .rejected("gap: only one windfall per turn") }
+            if state.windfallUsed { return .rejected("gap: only one windfall per turn") }
             if let days = ctx.daysSinceLastWindfall, days < rules.windfallMinGapDays {
                 return .rejected("gap: the last windfall was \(days) days ago (minimum \(rules.windfallMinGapDays))")
             }
 
         case .expense:
-            if saturatingAdd(balance, e.amountMinor) < 0 {
-                return .rejected("balance of \(Money.format(balance, economy: economy)) cannot cover this expense")
+            if saturatingAdd(state.balance, e.amountMinor) < 0 {
+                return .rejected("balance of \(Money.format(state.balance, economy: economy)) cannot cover this expense")
             }
         }
         return .accepted

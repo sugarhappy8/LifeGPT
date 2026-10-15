@@ -32,6 +32,7 @@
 3. Birth date is assumed to be **Jan 1** of the birth year; start date is **Jan 1 of (birth year + starting age)**.
 4. v1 money constants (all relative to the Economy card's `medianMonthlyIncomeMinor`, "median"): side hustle cap = `median × max(elapsedDays,7) / 60`; gift cap = `median × tier%` (destitute 10, poor 25, working 50, middle 100, comfortable 200, wealthy 400, ultraWealthy 800); windfall needs fate ≥ 95, cap = 6 × median, 730-day gap; any single entry bound = 12 × median; gift gap 90 days per giver; time advance ≤ 20 years per turn.
 5. Starting balance = 2% of median (age < 13), 10% (13–17), 50% (≥ 18).
+6. **Post-review change (final whole-branch review):** limits are enforced per turn, not only per entry. Side-hustle entries share one cap per turn; total gains in one turn are bounded by 12 × median; at most one gift or inheritance per turn; and the 90-day gift gap applies across **all** givers (not per giver), so inventing new relatives cannot get around it. Narrator-invented names are trimmed before use. Outline §4's per-turn sanity bound is the authority for this.
 
 **Unscheduled in the outline:** asset sales, loans, and crime payouts have no build phase. The validator rejects them as "not available yet". Add them to outline phase 6 when that phase is planned.
 

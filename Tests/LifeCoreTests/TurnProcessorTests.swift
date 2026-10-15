@@ -193,6 +193,50 @@ private func ledgerCount(_ store: LifeStore) throws -> Int { try store.ledger(li
         #expect(try r.store.castMembers().map(\.name) == ["Maria"])
     }
 
+    @Test func aGiftFromAnyoneBlocksOtherGiftsFor90Days() async throws {
+        let store = try TestChat.chat(try TestChat.library()).store
+        try store.seedHistory(cast: [CastUpdate(name: "Maria", relation: "mother", notes: nil, status: nil),
+                                     CastUpdate(name: "Tomás", relation: "friend", notes: nil, status: nil)],
+                              decisions: [], lifeState: [])
+        try store.apply(TestChat.turn(ledger: [TestChat.gift(5_000, from: "Maria", on: GameDate(year: 2019, month: 12, day: 1))]))
+        let ask = output("Tomás hands you cash.", money: [
+            ProposedMoneyEntry(sourceType: .gift, amountMinor: 1_000, reason: "a loan he waves away", counterparty: "Tomás")])
+        let r = try rig(narrate: [.output(ask)], repair: [.output(output("Tomás just smiles."))], store: store)
+        _ = try await r.processor.play("Tomás gives me money.")
+        #expect(r.narrator.rejectionsGiven.first?.contains { $0.contains("gap") } == true)
+        #expect(try store.balanceMinor() == r.start)
+    }
+
+    @Test func namesAreTrimmedSoPaddingCannotCreateExtraPeople() async throws {
+        let meet = output("You meet Maria.", cast: [CastUpdate(name: " Maria ", relation: "mother", notes: nil, status: nil)])
+        let r = try rig(narrate: [.output(meet)])
+        _ = try await r.processor.play("I meet my mother.")
+        #expect(try r.store.castMembers().map(\.name) == ["Maria"])
+
+        let help = output("Maria helps.", money: [
+            ProposedMoneyEntry(sourceType: .gift, amountMinor: 1_000, reason: "help", counterparty: "Maria ")])
+        r.narrator.narrateSteps = [.output(help)]
+        _ = try await r.processor.play("Maria helps me out.")
+        #expect(try r.store.balanceMinor() == r.start + 1_000)
+        #expect(try r.store.lastGiftDate(from: "Maria") != nil)
+    }
+
+    @Test func repairTransportErrorKeepsTheUsableFirstOutput() async throws {
+        let first = output("A good day.", money: [sideHustle(20_000_000_000), sideHustle(1_000, "a small sale")])
+        let r = try rig(narrate: [.output(first)], repair: [.error(ProviderError.http(status: 503, body: "overloaded"))])
+        let result = try await r.processor.play("I sold spoons.")
+        #expect(try r.store.balanceMinor() == r.start + 1_000)
+        #expect(result.text.contains("(Some changes were not applied:")); #expect(result.repaired)
+        #expect(try r.store.turnLogs().last?.rejections.contains { $0.hasPrefix("repair failed") } == true)
+    }
+
+    @Test func refusalDuringRepairStillThrowsAndWritesNothing() async throws {
+        let claim = output("Rich.", money: [sideHustle(20_000_000_000)])
+        let r = try rig(narrate: [.output(claim)], repair: [.failure(.refused)])
+        await #expect(throws: TurnError.refused) { _ = try await r.processor.play("I get rich.") }
+        #expect(try r.store.balanceMinor() == r.start); #expect(try r.store.turnLogs().isEmpty)
+    }
+
     @Test func chatsStayIsolatedAcrossTurns() async throws {
         let lib = try TestChat.library()
         let a = try rig(narrate: [.output(output("A sells.", money: [sideHustle(5_000)], cast: [

@@ -6,6 +6,8 @@ final class ScriptedNarrator: Narrator {
     enum Step {
         case output(TurnOutput)
         case failure(NarratorError)
+        /// Any other error, such as a network failure.
+        case error(any Error)
     }
 
     var narrateSteps: [Step]
@@ -38,6 +40,7 @@ final class ScriptedNarrator: Narrator {
         switch steps.removeFirst() {
         case .output(let out): return NarratorResult(output: out, inputTokens: 100, outputTokens: 50)
         case .failure(let error): throw error
+        case .error(let error): throw error
         }
     }
 }

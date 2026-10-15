@@ -113,6 +113,38 @@ private func one(_ e: ProposedMoneyEntry, _ ctx: MoneyContext = .stub()) -> Mone
         #expect(reason(one(entry(.expense, -4_200_001), .stub(balanceMinor: 9_000_000)))?.contains("bound") == true)
     }
 
+    // MARK: aggregate limits (final-review findings)
+
+    @Test func splittingASideHustleCannotBeatTheCap() {
+        let two = MoneyValidator.validate([entry(.sideHustle, 100_000), entry(.sideHustle, 100_000)], in: .stub())
+        #expect(two[0] == .accepted); #expect(reason(two[1])?.contains("cap") == true)
+        let fifty = MoneyValidator.validate(Array(repeating: entry(.sideHustle, 40_000), count: 50),
+                                            in: .stub(elapsedDays: 0))
+        #expect(fifty.filter { $0 == .accepted }.count == 1)
+    }
+
+    @Test func gainsInOneTurnAreBoundedInTotal() {
+        let rich = MoneyContext.stub(tier: .ultraWealthy, fate: 99)
+        #expect(one(entry(.windfall, 2_100_000), rich) == .accepted)
+        #expect(one(entry(.gift, 2_800_000, from: "Maria"), rich) == .accepted)
+        let both = MoneyValidator.validate([entry(.windfall, 2_100_000), entry(.gift, 2_800_000, from: "Maria")], in: rich)
+        #expect(both[0] == .accepted); #expect(reason(both[1])?.contains("bound") == true)
+    }
+
+    @Test func onlyOneGiftPerTurnAcrossGivers() {
+        let ctx = MoneyContext.stub(cast: ["Maria", "Tomás"])
+        let r = MoneyValidator.validate([entry(.gift, 1_000, from: "Maria"), entry(.inheritance, 1_000, from: "Tomás")], in: ctx)
+        #expect(r[0] == .accepted); #expect(reason(r[1])?.contains("gap") == true)
+    }
+
+    @Test func giftGapAppliesAcrossAllGivers() {
+        var ctx = MoneyContext.stub(cast: ["Maria", "Tomás"])
+        ctx.daysSinceLastAnyGift = 30
+        #expect(reason(one(entry(.gift, 1_000, from: "Tomás"), ctx))?.contains("gap") == true)
+        ctx.daysSinceLastAnyGift = 90
+        #expect(one(entry(.gift, 1_000, from: "Tomás"), ctx) == .accepted)
+    }
+
     // MARK: income stream changes
 
     private let skilled = IncomeStreamChange(action: .start, name: "shop", kind: .wage, tier: "skilled", monthlyMinor: 300_000)

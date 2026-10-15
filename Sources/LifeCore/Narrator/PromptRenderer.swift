@@ -28,7 +28,12 @@ public enum PromptRenderer {
         if !request.recentMessages.isEmpty {
             user += "\n## RECENT TURNS (oldest first)\n"
             for message in request.recentMessages {
-                user += "\(message.role == .player ? "Player" : "Narrator"): \(message.text)\n"
+                switch message.role {
+                case .player:
+                    user += "Player (earlier attempt): <earlier_attempt>\(defang(message.text))</earlier_attempt>\n"
+                case .narrator:
+                    user += "Narrator: \(defang(message.text))\n"
+                }
             }
         }
         if !rejections.isEmpty {
