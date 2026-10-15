@@ -1,0 +1,4 @@
+.build/
+.lifelab/
+*.lifechat
+.DS_Store
