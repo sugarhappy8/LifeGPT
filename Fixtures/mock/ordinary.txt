@@ -1,0 +1,5 @@
+I look around the neighborhood.
+I sell some spoons at the market.
+I wait a month.
+((what's my balance?))
+((how old am I?))
