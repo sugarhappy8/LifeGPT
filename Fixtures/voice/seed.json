@@ -1,0 +1,22 @@
+{
+  "character": {
+    "name": "Lena",
+    "birthplace": "Columbus, Ohio, USA",
+    "birth_year": 1990,
+    "appearance": "Tall and freckled, with a chipped front tooth and a habit of tucking her hair behind one ear.",
+    "starting_age": 30,
+    "background": "Grew up above her parents' diner. Quietly stubborn. Dreams of a workshop of her own.",
+    "family_wealth_tier": "middle"
+  },
+  "cast": [
+    { "name": "Maria", "relation": "mother", "notes": "Runs the family diner and worries about money.", "status": "alive" },
+    { "name": "Tomás", "relation": "friend", "notes": "A carpenter who lends Lena tools.", "status": "alive" }
+  ],
+  "decisions": [
+    { "summary": "Left her job at the call center", "choice": "quit to find work she could do with her hands", "importance": "major" }
+  ],
+  "life_state": [
+    { "key": "residence", "value": "a rented room over a laundromat" },
+    { "key": "occupation", "value": "unemployed, doing odd jobs" }
+  ]
+}

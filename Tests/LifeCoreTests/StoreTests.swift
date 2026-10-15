@@ -103,6 +103,21 @@ import Testing
         #expect(try store.lastLedgerDate(source: .windfall) == nil)
     }
 
+    @Test func seedingAddsHistoryWithoutTranscriptOrTurnLog() throws {
+        let lib = try TestChat.library()
+        let (_, store) = try TestChat.chat(lib)
+        try store.seedHistory(
+            cast: [CastUpdate(name: "Maria", relation: "mother", notes: "kind", status: nil)],
+            decisions: [DecisionRecord(summary: "Left her job", choice: "quit", importance: .major)],
+            lifeState: [LifeStateChange(key: "residence", value: "a rented room")])
+        #expect(try store.castMembers().map(\.name) == ["Maria"])
+        #expect(try store.castMembers()[0].firstMet == GameDate(year: 2020, month: 1, day: 1))
+        #expect(try store.decisions(limit: 5).map(\.summary) == ["Left her job"])
+        #expect(try store.lifeState() == ["residence": "a rented room"])
+        #expect(try store.recentMessages(limit: 5).isEmpty); #expect(try store.turnLogs().isEmpty)
+        #expect(try store.balanceMinor() == 175_000)
+    }
+
     @Test func twoChatsShareNothing() throws {
         let lib = try TestChat.library()
         let (_, a) = try TestChat.chat(lib, name: "Ana")

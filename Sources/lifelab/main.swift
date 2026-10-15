@@ -8,7 +8,9 @@ case nil:
     print(LifeCore.version)
 case "mock":
     exit(await runMock(Array(arguments.dropFirst())))
+case "voice":
+    exit(await runVoice(Array(arguments.dropFirst())))
 default:
-    FileHandle.standardError.write(Data("usage: lifelab [mock ...]\n".utf8))
+    FileHandle.standardError.write(Data("usage: lifelab [mock ...|voice ...]\n".utf8))
     exit(2)
 }

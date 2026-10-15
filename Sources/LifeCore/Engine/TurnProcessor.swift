@@ -57,6 +57,7 @@ public final class TurnProcessor {
                                       targetWords: truth.character.replyLengthWords,
                                       recentMessages: try store.recentMessages(limit: 6))
         var repairUsed = false
+        var allRejections: [String] = []
         var inputTokens = 0, outputTokens = 0
 
         // 1. Narrate; unusable output earns one repair.
@@ -66,6 +67,7 @@ public final class TurnProcessor {
         } catch NarratorError.refused {
             throw TurnError.refused
         } catch let error as NarratorError {
+            allRejections.append("narrator output: \(Self.describe(error))")
             do {
                 result = try await narrator.repair(
                     request, rejections: ["The previous output could not be used: \(Self.describe(error))"])
@@ -81,7 +83,7 @@ public final class TurnProcessor {
 
         // 2. Validate; rejected changes earn one repair, unless one was already used.
         var evaluation = try evaluate(result.output, truth: truth, fate: fateRoll)
-        var allRejections = evaluation.rejections
+        allRejections += evaluation.rejections
         if !evaluation.rejections.isEmpty && !repairUsed {
             repairUsed = true
             do {

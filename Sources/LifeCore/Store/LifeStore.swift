@@ -249,31 +249,7 @@ public final class LifeStore: Sendable {
                 }
             }
 
-            for d in turn.decisions {
-                try db.execute(sql: "INSERT INTO decisions (date, summary, choice, importance) VALUES (?, ?, ?, ?)",
-                               arguments: [date, d.summary, d.choice, d.importance.rawValue])
-            }
-            for s in turn.lifeState {
-                try db.execute(sql: """
-                    INSERT INTO life_state (key, value) VALUES (?, ?)
-                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                    """, arguments: [s.key, s.value])
-            }
-            for u in turn.cast {
-                if try Int64.fetchOne(db, sql: "SELECT id FROM cast_members WHERE name = ?", arguments: [u.name]) != nil {
-                    try db.execute(sql: """
-                        UPDATE cast_members
-                        SET relation = COALESCE(?, relation), notes = COALESCE(?, notes),
-                            status = COALESCE(?, status), last_seen = ?
-                        WHERE name = ?
-                        """, arguments: [u.relation, u.notes, u.status, date, u.name])
-                } else {
-                    try db.execute(sql: """
-                        INSERT INTO cast_members (name, relation, notes, status, first_met, last_seen)
-                        VALUES (?, ?, ?, COALESCE(?, 'alive'), ?, ?)
-                        """, arguments: [u.name, u.relation, u.notes, u.status, date, date])
-                }
-            }
+            try Self.writeStory(db, date: date, decisions: turn.decisions, lifeState: turn.lifeState, cast: turn.cast)
             for e in turn.events {
                 try db.execute(sql: "INSERT INTO events (date, title, importance, uncanny) VALUES (?, ?, ?, ?)",
                                arguments: [date, e.title, e.importance.rawValue, e.uncanny])
@@ -297,7 +273,46 @@ public final class LifeStore: Sendable {
         }
     }
 
+    /// Adds starting history (people, decisions, life state) to a fresh chat
+    /// without touching the transcript, turn log, or ledger.
+    public func seedHistory(cast: [CastUpdate], decisions: [DecisionRecord], lifeState: [LifeStateChange]) throws {
+        try dbQueue.write { db in
+            let date = try String.fetchOne(db, sql: "SELECT game_date FROM character") ?? ""
+            try Self.writeStory(db, date: date, decisions: decisions, lifeState: lifeState, cast: cast)
+        }
+    }
+
     // MARK: Helpers
+
+    /// Decisions, life state and cast changes, shared by `apply` and `seedHistory`.
+    private static func writeStory(_ db: Database, date: String, decisions: [DecisionRecord],
+                                   lifeState: [LifeStateChange], cast: [CastUpdate]) throws {
+        for d in decisions {
+            try db.execute(sql: "INSERT INTO decisions (date, summary, choice, importance) VALUES (?, ?, ?, ?)",
+                           arguments: [date, d.summary, d.choice, d.importance.rawValue])
+        }
+        for s in lifeState {
+            try db.execute(sql: """
+                INSERT INTO life_state (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """, arguments: [s.key, s.value])
+        }
+        for u in cast {
+            if try Int64.fetchOne(db, sql: "SELECT id FROM cast_members WHERE name = ?", arguments: [u.name]) != nil {
+                try db.execute(sql: """
+                    UPDATE cast_members
+                    SET relation = COALESCE(?, relation), notes = COALESCE(?, notes),
+                        status = COALESCE(?, status), last_seen = ?
+                    WHERE name = ?
+                    """, arguments: [u.relation, u.notes, u.status, date, u.name])
+            } else {
+                try db.execute(sql: """
+                    INSERT INTO cast_members (name, relation, notes, status, first_met, last_seen)
+                    VALUES (?, ?, ?, COALESCE(?, 'alive'), ?, ?)
+                    """, arguments: [u.name, u.relation, u.notes, u.status, date, date])
+            }
+        }
+    }
 
     private static func balance(_ db: Database) throws -> Int64 {
         try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(amount_minor), 0) FROM ledger") ?? 0

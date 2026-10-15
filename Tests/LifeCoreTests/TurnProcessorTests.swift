@@ -115,6 +115,15 @@ private func ledgerCount(_ store: LifeStore) throws -> Int { try store.ledger(li
         #expect(r.narrator.rejectionsGiven[0].first?.contains("unexpected token") == true)
     }
 
+    @Test func malformedFirstOutputIsLoggedForAudit() async throws {
+        let r = try rig(narrate: [.failure(.malformedOutput("unexpected token"))],
+                        repair: [.output(output("You look around."))])
+        _ = try await r.processor.play("I look around.")
+        let rejections = try #require(try r.store.turnLogs().last?.rejections)
+        #expect(rejections.first?.hasPrefix("narrator output: ") == true)
+        #expect(rejections.first?.contains("unexpected token") == true)
+    }
+
     @Test func secondMalformedWritesNothing() async throws {
         let r = try rig(narrate: [.failure(.malformedOutput("bad"))], repair: [.failure(.truncated)])
         await #expect(throws: TurnError.self) { _ = try await r.processor.play("I look around.") }
