@@ -14,7 +14,8 @@ let package = Package(
     targets: [
         .target(
             name: "LifeCore",
-            dependencies: [.product(name: "GRDB", package: "GRDB.swift")]
+            dependencies: [.product(name: "GRDB", package: "GRDB.swift")],
+            resources: [.copy("Resources")]
         ),
         .executableTarget(
             name: "lifelab",
