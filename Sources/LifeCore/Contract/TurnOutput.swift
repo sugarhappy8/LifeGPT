@@ -8,15 +8,17 @@ public struct ProposedMoneyEntry: Codable, Equatable, Sendable {
     public var incomeStream: String?
     public var counterparty: String?
     public var fateUsed: Int?
+    public var accountId: String?
 
     public init(sourceType: SourceType, amountMinor: Int64, reason: String,
-                incomeStream: String? = nil, counterparty: String? = nil, fateUsed: Int? = nil) {
+                incomeStream: String? = nil, counterparty: String? = nil, fateUsed: Int? = nil, accountId: String? = nil) {
         self.sourceType = sourceType
         self.amountMinor = amountMinor
         self.reason = reason
         self.incomeStream = incomeStream
         self.counterparty = counterparty
         self.fateUsed = fateUsed
+        self.accountId = accountId
     }
 }
 
@@ -55,11 +57,20 @@ public struct Resolution: Codable, Equatable, Sendable {
     public var lifeStateChanges: [LifeStateChange]
     public var castUpdates: [CastUpdate]
     public var events: [EventRecord]
+    public var pathUpdates: [PathUpdate]?
+    public var threadUpdates: [StoryThread]?
+    public var financialActions: [FinancialAction]?
+    public var lifeEnded: Bool?
+    public var crimeAttempt: CrimeAttempt?
+    public var accountOpenings: [AccountOpening]?
+    public var transfers: [AccountTransfer]?
 
     public init(zoom: Zoom, timeAdvance: TimeAdvance, money: [ProposedMoneyEntry] = [],
                 incomeStreams: [IncomeStreamChange] = [], decisions: [DecisionRecord] = [],
                 lifeStateChanges: [LifeStateChange] = [], castUpdates: [CastUpdate] = [],
-                events: [EventRecord] = []) {
+                events: [EventRecord] = [], pathUpdates: [PathUpdate]? = nil, threadUpdates: [StoryThread]? = nil,
+                financialActions: [FinancialAction]? = nil, lifeEnded: Bool? = nil, crimeAttempt: CrimeAttempt? = nil,
+                accountOpenings: [AccountOpening]? = nil, transfers: [AccountTransfer]? = nil) {
         self.zoom = zoom
         self.timeAdvance = timeAdvance
         self.money = money
@@ -68,6 +79,9 @@ public struct Resolution: Codable, Equatable, Sendable {
         self.lifeStateChanges = lifeStateChanges
         self.castUpdates = castUpdates
         self.events = events
+        self.pathUpdates = pathUpdates; self.threadUpdates = threadUpdates
+        self.financialActions = financialActions; self.lifeEnded = lifeEnded; self.crimeAttempt = crimeAttempt
+        self.accountOpenings = accountOpenings; self.transfers = transfers
     }
 }
 

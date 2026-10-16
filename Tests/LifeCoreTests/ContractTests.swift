@@ -69,7 +69,7 @@ import Testing
 
     @Test func schemaIsJSONWithRequiredKeys() throws {
         let schema = try #require(JSONSerialization.jsonObject(with: Data(OutputSchema.json.utf8)) as? [String: Any])
-        #expect(schema["required"] as? [String] == ["resolution", "narration"])
+        #expect(schema["required"] as? [String] == ["resolution", "narration", "author_notes", "choices"])
         #expect(schema["additionalProperties"] as? Bool == false)
         let resolution = try #require((schema["properties"] as? [String: Any])?["resolution"] as? [String: Any])
         let required = try #require(resolution["required"] as? [String])
@@ -82,13 +82,13 @@ import Testing
         #expect(r.lowerBound < n.lowerBound)
     }
 
-    @Test func schemaSourceTypesMatchTheEnum() throws {
+    @Test func schemaOnlyOffersNarratorOwnedMoneySources() throws {
         let schema = try #require(JSONSerialization.jsonObject(with: Data(OutputSchema.json.utf8)) as? [String: Any])
         let resolution = try #require((schema["properties"] as? [String: Any])?["resolution"] as? [String: Any])
         let money = try #require((resolution["properties"] as? [String: Any])?["money"] as? [String: Any])
         let item = try #require(money["items"] as? [String: Any])
         let source = try #require((item["properties"] as? [String: Any])?["source_type"] as? [String: Any])
-        #expect(Set(try #require(source["enum"] as? [String])) == Set(SourceType.allCases.map(\.rawValue)))
+        #expect(Set(try #require(source["enum"] as? [String])) == Set([SourceType.sideHustle, .gift, .inheritance, .windfall, .expense, .adjustment].map(\.rawValue)))
     }
 
     @Test func addingTimeAdvance() {

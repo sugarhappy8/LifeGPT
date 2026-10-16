@@ -2,3 +2,9 @@
 .lifelab/
 *.lifechat
 .DS_Store
+
+dist/
+.swiftpm/
+*.lifechat-wal
+*.lifechat-shm
+*.dmg

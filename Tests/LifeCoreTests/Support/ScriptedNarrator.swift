@@ -2,7 +2,7 @@ import Foundation
 @testable import LifeCore
 
 /// A narrator that replays queued results and records what it was asked.
-final class ScriptedNarrator: Narrator {
+final class ScriptedNarrator: Narrator, @unchecked Sendable {
     enum Step {
         case output(TurnOutput)
         case failure(NarratorError)

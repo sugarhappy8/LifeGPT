@@ -30,3 +30,7 @@ _(What was edited in `Sources/LifeCore/Resources/voice.md` or `system.md`, and w
 ## Open issues
 
 _(Anything found that the code or prompts should fix next.)_
+
+## Desktop implementation update — 2026-10-16
+
+The native app now includes Anthropic, Gemini, and local providers, usage accounting, editable setup, and local two-step narration. New automated tests use stubbed transports and providers. No paid live voice-lab run was performed during this implementation. The original live-results table above remains intentionally unfilled; complete it with real model observations before making provider-quality claims.

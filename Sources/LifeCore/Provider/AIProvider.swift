@@ -5,14 +5,17 @@ public struct ProviderCapabilities: Equatable, Sendable {
     public var supportsToolCalls: Bool
     public var supportsCaching: Bool
     public var supportsStreaming: Bool
+    /// Some grammar compilers need a flat envelope around locally validated data.
+    public var prefersFlatResponseSchema: Bool
 
     public init(maxContextTokens: Int, supportsJSONSchema: Bool, supportsToolCalls: Bool,
-                supportsCaching: Bool, supportsStreaming: Bool) {
+                supportsCaching: Bool, supportsStreaming: Bool, prefersFlatResponseSchema: Bool = false) {
         self.maxContextTokens = maxContextTokens
         self.supportsJSONSchema = supportsJSONSchema
         self.supportsToolCalls = supportsToolCalls
         self.supportsCaching = supportsCaching
         self.supportsStreaming = supportsStreaming
+        self.prefersFlatResponseSchema = prefersFlatResponseSchema
     }
 }
 

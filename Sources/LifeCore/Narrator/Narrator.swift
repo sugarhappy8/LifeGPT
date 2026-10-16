@@ -10,6 +10,9 @@ public struct GroundTruth: Equatable, Sendable {
     public var recentDecisions: [DecisionRow]
     public var lifeState: [String: String]
     public var guardrails: Guardrails
+    public var household: HouseholdSupport = .independent
+    public var accounts: [BankAccount] = []
+    public var playStyle: PlayStyle = .simulation
 
     public init(character: Character, economy: EconomyCard, balanceMinor: Int64, incomeStreams: [IncomeStream],
                 recentLedger: [LedgerEntry], cast: [CastMember], recentDecisions: [DecisionRow],
@@ -32,22 +35,29 @@ public enum GroundTruthBuilder {
     public static func build(store: LifeStore, rules: MoneyRules) throws -> GroundTruth {
         let character = try store.character()
         let economy = try store.economy()
-        return GroundTruth(
+        var truth = GroundTruth(
             character: character, economy: economy, balanceMinor: try store.balanceMinor(),
             incomeStreams: try store.incomeStreams(), recentLedger: try store.ledger(limit: 10),
             cast: try store.castMembers(), recentDecisions: try store.decisions(limit: 10),
             lifeState: try store.lifeState(),
             guardrails: rules.guardrails(economy: economy, familyTier: character.familyWealthTier, elapsedDays: 30))
+        truth.household = HouseholdSupport.resolve(settings: try store.sessionSettings(), state: truth.lifeState, background: character.background)
+        truth.accounts = try store.accounts()
+        truth.playStyle = try store.sessionSettings().playStyle
+        return truth
     }
 }
 
 public struct NarratorRequest: Sendable {
     public var groundTruth: GroundTruth
-    /// The player's text, trimmed. It is an attempt, never a fact.
+    /// Trimmed story input, interpreted according to the selected play style.
     public var playerInput: String
     public var fate: Int
     public var targetWords: Int
     public var recentMessages: [ChatMessage]
+    public var memory = MemoryContext()
+    public var requestedTime: TimeAdvance? = nil
+    public var rawFate: Int? = nil
 
     public init(groundTruth: GroundTruth, playerInput: String, fate: Int, targetWords: Int,
                 recentMessages: [ChatMessage]) {
@@ -79,7 +89,7 @@ public enum NarratorError: Error, Equatable, Sendable {
     case malformedOutput(String)
 }
 
-public protocol Narrator {
+public protocol Narrator: Sendable {
     func narrate(_ request: NarratorRequest) async throws -> NarratorResult
     /// A second attempt after bad output or rejected changes.
     func repair(_ request: NarratorRequest, rejections: [String]) async throws -> NarratorResult

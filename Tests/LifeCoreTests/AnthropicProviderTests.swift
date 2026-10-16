@@ -35,7 +35,7 @@ private let sample = ProviderRequest(system: "SYS", user: "USER", maxOutputToken
         #expect(config["effort"] as? String == "medium")
         let format = try #require(config["format"] as? [String: Any])
         #expect(format["type"] as? String == "json_schema")
-        #expect((format["schema"] as? [String: Any])?["required"] as? [String] == ["resolution", "narration"])
+        #expect((format["schema"] as? [String: Any])?["required"] as? [String] == ["resolution", "narration", "author_notes", "choices"])
     }
 
     @Test func usesConfiguredModelAndEffortAndOmitsFormatWithoutSchema() async throws {
@@ -118,6 +118,7 @@ private let sample = ProviderRequest(system: "SYS", user: "USER", maxOutputToken
     @Test func capabilitiesReflectWhatTheAdapterImplements() {
         let c = provider(StubTransport(body: okResponse)).capabilities
         #expect(c.maxContextTokens == 1_000_000); #expect(c.supportsJSONSchema)
+        #expect(c.prefersFlatResponseSchema)
         #expect(!c.supportsToolCalls); #expect(!c.supportsCaching); #expect(!c.supportsStreaming)
     }
 
@@ -138,5 +139,11 @@ private let sample = ProviderRequest(system: "SYS", user: "USER", maxOutputToken
         #expect(try store.turnLogs().last?.inputTokens == 5)
         let body = try transport.lastBody()
         #expect((body["messages"] as? [[String: Any]])?[0]["content"] as? String != nil)
+        let config = try #require(body["output_config"] as? [String: Any])
+        let format = try #require(config["format"] as? [String: Any])
+        let schema = try #require(format["schema"] as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        #expect((properties["resolution"] as? [String: Any])?["type"] as? String == "string")
+        #expect(((body["messages"] as? [[String: Any]])?[0]["content"] as? String)?.contains(OutputSchema.json) == true)
     }
 }

@@ -19,15 +19,17 @@ public struct NewLedgerEntry: Equatable, Sendable {
     public var reason: String
     public var counterparty: String?
     public var origin: Origin
+    public var accountId: String
 
     public init(date: GameDate, sourceType: SourceType, amountMinor: Int64, reason: String,
-                counterparty: String?, origin: Origin) {
+                counterparty: String?, origin: Origin, accountId: String = "personal") {
         self.date = date
         self.sourceType = sourceType
         self.amountMinor = amountMinor
         self.reason = reason
         self.counterparty = counterparty
         self.origin = origin
+        self.accountId = accountId
     }
 }
 
@@ -40,9 +42,10 @@ public struct LedgerEntry: Equatable, Sendable {
     public var counterparty: String?
     public var origin: Origin
     public var balanceAfterMinor: Int64
+    public var accountId: String
 
     public init(id: Int64, date: GameDate, sourceType: SourceType, amountMinor: Int64, reason: String,
-                counterparty: String?, origin: Origin, balanceAfterMinor: Int64) {
+                counterparty: String?, origin: Origin, balanceAfterMinor: Int64, accountId: String = "personal") {
         self.id = id
         self.date = date
         self.sourceType = sourceType
@@ -51,6 +54,7 @@ public struct LedgerEntry: Equatable, Sendable {
         self.counterparty = counterparty
         self.origin = origin
         self.balanceAfterMinor = balanceAfterMinor
+        self.accountId = accountId
     }
 }
 
@@ -60,6 +64,7 @@ public struct IncomeStream: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case wage
         case selfEmployment = "self_employment"
+        case business, allowance, rental
     }
 
     public var name: String
@@ -68,15 +73,36 @@ public struct IncomeStream: Codable, Equatable, Sendable {
     public var monthlyMinor: Int64
     public var startedOn: GameDate
     public var endedOn: GameDate?
+    public var accountId: String
+    public var pathId: String?
 
     public init(name: String, kind: Kind, tier: String?, monthlyMinor: Int64,
-                startedOn: GameDate, endedOn: GameDate? = nil) {
+                startedOn: GameDate, endedOn: GameDate? = nil,
+                accountId: String = "personal", pathId: String? = nil) {
         self.name = name
         self.kind = kind
         self.tier = tier
         self.monthlyMinor = monthlyMinor
         self.startedOn = startedOn
         self.endedOn = endedOn
+        self.accountId = accountId
+        self.pathId = pathId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, kind, tier, monthlyMinor, startedOn, endedOn, accountId, pathId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        name = try values.decode(String.self, forKey: .name)
+        kind = try values.decode(Kind.self, forKey: .kind)
+        tier = try values.decodeIfPresent(String.self, forKey: .tier)
+        monthlyMinor = try values.decode(Int64.self, forKey: .monthlyMinor)
+        startedOn = try values.decode(GameDate.self, forKey: .startedOn)
+        endedOn = try values.decodeIfPresent(GameDate.self, forKey: .endedOn)
+        accountId = try values.decodeIfPresent(String.self, forKey: .accountId) ?? "personal"
+        pathId = try values.decodeIfPresent(String.self, forKey: .pathId)
     }
 }
 
@@ -88,13 +114,23 @@ public struct IncomeStreamChange: Codable, Equatable, Sendable {
     public var kind: IncomeStream.Kind?
     public var tier: String?
     public var monthlyMinor: Int64?
+    public var accountId: String?
+    public var pathId: String?
+    public var effectiveFrom: String?
+    public var reason: String?
 
-    public init(action: Action, name: String, kind: IncomeStream.Kind?, tier: String?, monthlyMinor: Int64?) {
+    public init(action: Action, name: String, kind: IncomeStream.Kind?, tier: String?, monthlyMinor: Int64?,
+                accountId: String? = nil, pathId: String? = nil, effectiveFrom: String? = nil,
+                reason: String? = nil) {
         self.action = action
         self.name = name
         self.kind = kind
         self.tier = tier
         self.monthlyMinor = monthlyMinor
+        self.accountId = accountId
+        self.pathId = pathId
+        self.effectiveFrom = effectiveFrom
+        self.reason = reason
     }
 }
 
@@ -228,6 +264,14 @@ public struct AppliedTurn: Sendable {
     public var cast: [CastUpdate]
     public var events: [EventRecord]
     public var log: TurnLog
+    public var expectedRevision: Int? = nil
+    public var accountOpenings: [AccountOpening] = []
+    public var authorNotes: String = ""
+    public var choices: [String] = []
+    public var paths: [OpportunityPath] = []
+    public var threads: [StoryThread] = []
+    public var positions: [FinancialPosition]? = nil
+    public var ended: Bool = false
 
     public init(playerText: String, narration: String, newDate: GameDate, ledger: [NewLedgerEntry],
                 streamChanges: [IncomeStreamChange], decisions: [DecisionRecord],

@@ -69,6 +69,10 @@ public enum SourceType: String, Codable, Sendable, CaseIterable {
     case crime
     case expense
     case livingCost = "living_cost"
+    case transfer
+    case rentalIncome = "rental_income"
+    case allowance
+    case adjustment
 }
 
 // MARK: Character
@@ -167,6 +171,9 @@ public enum StartingMoney {
     /// 2% of the median monthly income under 13, 10% for 13–17, 50% from 18.
     public static func balanceMinor(forAge age: Int, economy: EconomyCard) -> Int64 {
         let percent: Int64 = age < 13 ? 2 : (age < 18 ? 10 : 50)
-        return economy.medianMonthlyIncomeMinor * percent / 100
+        return CheckedMoney.fraction(economy.medianMonthlyIncomeMinor, numerator: percent, denominator: 100)
     }
 }
+
+/// Unambiguous name for clients that also import Swift.Character.
+public typealias LifeCharacter = Character

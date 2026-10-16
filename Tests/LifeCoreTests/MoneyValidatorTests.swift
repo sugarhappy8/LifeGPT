@@ -48,9 +48,9 @@ private func one(_ e: ProposedMoneyEntry, _ ctx: MoneyContext = .stub()) -> Mone
         }
     }
 
-    @Test func notYetAvailableSourcesAreRejected() {
+    @Test func directAdvancedPayoutsAreRejected() {
         for s in [SourceType.businessProfit, .assetSale, .loan, .crime] {
-            #expect(reason(one(entry(s, 100)))?.contains("not available yet") == true, "\(s)")
+            #expect(reason(one(entry(s, 100)))?.contains("engine-only") == true, "\(s)")
         }
     }
 
@@ -109,8 +109,10 @@ private func one(_ e: ProposedMoneyEntry, _ ctx: MoneyContext = .stub()) -> Mone
         #expect(reason(one(entry(.expense, 500)))?.contains("sign") == true)
     }
 
-    @Test func singleEntryBoundIs12TimesMedian() {
-        #expect(reason(one(entry(.expense, -4_200_001), .stub(balanceMinor: 9_000_000)))?.contains("bound") == true)
+    @Test func largePurchasesCanUseSavingsBeyondLocalIncomeBounds() {
+        #expect(one(entry(.expense, -4_200_001), .stub(balanceMinor: 9_000_000)) == .accepted)
+        #expect(reason(one(entry(.expense, -9_000_001), .stub(balanceMinor: 9_000_000)))?.contains("balance") == true)
+        #expect(reason(one(entry(.windfall, 4_200_001), .stub(fate: 100)))?.contains("bound") == true)
     }
 
     // MARK: aggregate limits (final-review findings)
@@ -189,10 +191,17 @@ private func one(_ e: ProposedMoneyEntry, _ ctx: MoneyContext = .stub()) -> Mone
         #expect(reason(check([skilled], existing: [active])[0])?.contains("already active") == true)
     }
 
-    @Test func changesInOneBatchSeeEachOther() {
+    @Test func eachStreamCanChangeOnlyOncePerTurn() {
         let raise = IncomeStreamChange(action: .change, name: "shop", kind: nil, tier: nil, monthlyMinor: 310_000)
         let quit = IncomeStreamChange(action: .end, name: "shop", kind: nil, tier: nil, monthlyMinor: nil)
-        #expect(check([skilled, raise, quit]) == [.accepted, .accepted, .accepted])
-        #expect(reason(check([skilled, quit, raise])[2])?.contains("unknown stream") == true)
+        let verdicts = check([skilled, raise, quit])
+        #expect(verdicts[0] == .accepted)
+        #expect(reason(verdicts[1])?.contains("one change") == true)
+        #expect(reason(verdicts[2])?.contains("one change") == true)
+    }
+
+    @Test func distinctWageStreamsAreAllowed() {
+        var second = skilled; second.name = "weekend shop"
+        #expect(check([skilled, second]) == [.accepted, .accepted])
     }
 }

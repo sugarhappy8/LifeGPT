@@ -12,7 +12,12 @@ public struct MoneyContext: Sendable {
     public var daysSinceLastGiftByGiver: [String: Int]
     /// Days since the last gift or inheritance from anyone; nil means never.
     public var daysSinceLastAnyGift: Int?
+    public var recentSideHustleMinor: Int64 = 0
+    public var giverTiers: [String: WealthTier] = [:]
+    public var giverStatuses: [String: String] = [:]
     public var rules: MoneyRules
+    public var playStyle: PlayStyle = .simulation
+    public var accountBalances: [String: Int64]? = nil
 
     public init(economy: EconomyCard, familyTier: WealthTier, balanceMinor: Int64, elapsedDays: Int,
                 fate: Int, castNames: Set<String>, daysSinceLastWindfall: Int? = nil,
@@ -36,20 +41,20 @@ public enum MoneyVerdict: Equatable, Sendable {
     case rejected(String)
 }
 
-/// Pure checks on what the narrator proposes. The player's words never reach
-/// this code as facts: only the narrator's structured output does, and only
-/// what passes here is written to the ledger.
+/// Pure checks on structured proposals under the selected play style.
+/// Only validated records can be written to the ledger.
 public enum MoneyValidator {
     // MARK: Money entries
 
     /// One verdict per entry, in order. A running balance and the per-turn
     /// windfall and gift limits carry across entries.
     public static func validate(_ entries: [ProposedMoneyEntry], in ctx: MoneyContext) -> [MoneyVerdict] {
-        var state = TurnState(balance: ctx.balanceMinor)
+        var state = TurnState(balances: ctx.accountBalances ?? ["personal": ctx.balanceMinor])
         return entries.map { entry in
             let verdict = check(entry, ctx: ctx, state: state)
             if verdict == .accepted {
-                state.balance = saturatingAdd(state.balance, entry.amountMinor)
+                let account = entry.accountId ?? "personal"
+                state.balances[account] = saturatingAdd(state.balances[account, default: 0], entry.amountMinor)
                 switch entry.sourceType {
                 case .windfall:
                     state.windfallUsed = true
@@ -71,7 +76,7 @@ public enum MoneyValidator {
     /// What earlier entries in the same turn have already used up, so a claim
     /// cannot be split into many small entries to get past a per-entry limit.
     private struct TurnState {
-        var balance: Int64
+        var balances: [String: Int64]
         var windfallUsed = false
         var giftUsed = false
         var sideHustleUsed: Int64 = 0
@@ -80,7 +85,10 @@ public enum MoneyValidator {
 
     private static func check(_ e: ProposedMoneyEntry, ctx: MoneyContext, state: TurnState) -> MoneyVerdict {
         let economy = ctx.economy, rules = ctx.rules
+        let account = e.accountId ?? "personal"
+        guard let balance = state.balances[account] else { return .rejected("unknown account: \(account)") }
 
+        if e.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .rejected("a concrete reason is required") }
         if e.amountMinor == 0 { return .rejected("zero amount") }
 
         switch e.sourceType {
@@ -92,7 +100,7 @@ public enum MoneyValidator {
             break
         }
 
-        let bound = rules.singleEntryBound(economy: economy)
+        let bound: Int64 = ctx.playStyle == .sandbox || e.sourceType == .expense ? 1_000_000_000_000 : rules.singleEntryBound(economy: economy)
         if e.amountMinor.magnitude > UInt64(bound) {
             return .rejected("exceeds the plausible bound for a single entry (\(Money.format(bound, economy: economy)))")
         }
@@ -103,14 +111,15 @@ public enum MoneyValidator {
         }
 
         switch e.sourceType {
-        case .opening, .wage, .investment, .livingCost:
+        case .opening, .wage, .investment, .livingCost, .transfer, .rentalIncome, .allowance:
             return .rejected("engine-only source: \(e.sourceType.rawValue) is paid or charged by the game, not proposed by the narrator")
 
         case .businessProfit, .assetSale, .loan, .crime:
-            return .rejected("not available yet: \(e.sourceType.rawValue) payouts are not supported in this version")
+            return .rejected("engine-only source: use a validated path, financial action, or crime attempt for \(e.sourceType.rawValue)")
 
         case .sideHustle:
-            let cap = rules.sideHustleCap(economy: economy, elapsedDays: ctx.elapsedDays)
+            if ctx.playStyle == .sandbox { break }
+            let cap = max(0, rules.sideHustleCap(economy: economy, elapsedDays: ctx.elapsedDays) - ctx.recentSideHustleMinor)
             if saturatingAdd(state.sideHustleUsed, e.amountMinor) > cap {
                 return .rejected("over the side-hustle cap of \(Money.format(cap, economy: economy)) for this period "
                                  + "(\(Money.format(state.sideHustleUsed, economy: economy)) already used this turn)")
@@ -120,7 +129,12 @@ public enum MoneyValidator {
             guard let giver = e.counterparty,
                   ctx.castNames.contains(where: { $0.caseInsensitiveCompare(giver) == .orderedSame })
             else { return .rejected("the giver must be someone in your cast") }
-            let cap = rules.giftCap(economy: economy, familyTier: ctx.familyTier)
+            let status = ctx.giverStatuses.first { $0.key.caseInsensitiveCompare(giver) == .orderedSame }?.value
+            if e.sourceType == .gift, status == "dead" { return .rejected("a dead person cannot give a new gift") }
+            if e.sourceType == .inheritance, let status, status != "dead" { return .rejected("inheritance needs a recorded death") }
+            if ctx.playStyle == .sandbox { break }
+            let tier = ctx.giverTiers.first { $0.key.caseInsensitiveCompare(giver) == .orderedSame }?.value ?? ctx.familyTier
+            let cap = rules.giftCap(economy: economy, familyTier: tier)
             if e.amountMinor > cap {
                 return .rejected("over the gift cap of \(Money.format(cap, economy: economy)) for this family")
             }
@@ -134,6 +148,7 @@ public enum MoneyValidator {
             }
 
         case .windfall:
+            if ctx.playStyle == .sandbox { break }
             if ctx.fate < rules.windfallMinFate {
                 return .rejected("fate roll \(ctx.fate) is below the \(rules.windfallMinFate) a windfall needs")
             }
@@ -147,69 +162,23 @@ public enum MoneyValidator {
             }
 
         case .expense:
-            if saturatingAdd(state.balance, e.amountMinor) < 0 {
-                return .rejected("balance of \(Money.format(state.balance, economy: economy)) cannot cover this expense")
+            if saturatingAdd(balance, e.amountMinor) < 0 {
+                return .rejected("account \(account) balance of \(Money.format(balance, economy: economy)) cannot cover this expense")
             }
+        case .adjustment:
+            guard ctx.playStyle == .sandbox else { return .rejected("record adjustments require Sandbox play style") }
+            if saturatingAdd(balance, e.amountMinor) < 0 { return .rejected("an adjustment cannot make an account negative") }
         }
         return .accepted
     }
 
     // MARK: Income streams
 
-    private struct StreamDraft {
-        var kind: IncomeStream.Kind
-        var tier: String?
-        var monthlyMinor: Int64?
-    }
-
-    /// One verdict per change, in order. Changes in the same batch see each other.
+    /// Shares recurring-income limits with the dated settlement planner.
     public static func validate(_ changes: [IncomeStreamChange], existing: [IncomeStream],
-                                economy: EconomyCard, rules: MoneyRules) -> [MoneyVerdict] {
-        var active: [String: StreamDraft] = [:]
-        for s in existing where s.endedOn == nil {
-            active[s.name.lowercased()] = StreamDraft(kind: s.kind, tier: s.tier, monthlyMinor: s.monthlyMinor)
-        }
-        return changes.map { c in
-            let key = c.name.lowercased()
-            switch c.action {
-            case .start:
-                if active[key] != nil { return .rejected("a stream named \(c.name) is already active") }
-                let draft = StreamDraft(kind: c.kind ?? .wage, tier: c.tier, monthlyMinor: c.monthlyMinor)
-                if let problem = problem(with: draft, economy: economy, rules: rules) { return .rejected(problem) }
-                active[key] = draft
-                return .accepted
-            case .change:
-                guard let current = active[key] else { return .rejected("unknown stream: \(c.name)") }
-                let draft = StreamDraft(kind: c.kind ?? current.kind, tier: c.tier ?? current.tier,
-                                        monthlyMinor: c.monthlyMinor ?? current.monthlyMinor)
-                if let problem = problem(with: draft, economy: economy, rules: rules) { return .rejected(problem) }
-                active[key] = draft
-                return .accepted
-            case .end:
-                guard active[key] != nil else { return .rejected("unknown stream: \(c.name)") }
-                active[key] = nil
-                return .accepted
-            }
-        }
-    }
-
-    private static func problem(with draft: StreamDraft, economy: EconomyCard, rules: MoneyRules) -> String? {
-        guard let monthly = draft.monthlyMinor else { return "missing monthly amount, so it cannot be checked against a band" }
-        switch draft.kind {
-        case .wage:
-            guard let tier = draft.tier,
-                  let band = economy.wageBands.first(where: { $0.name.caseInsensitiveCompare(tier) == .orderedSame })
-            else { return "unknown or missing wage tier (no matching band)" }
-            if monthly < band.minMonthlyMinor || monthly > band.maxMonthlyMinor {
-                return "outside the \(band.name) band (\(Money.format(band.minMonthlyMinor, economy: economy)) to \(Money.format(band.maxMonthlyMinor, economy: economy)) per month)"
-            }
-        case .selfEmployment:
-            let cap = rules.selfEmploymentMonthlyCap(economy: economy)
-            if monthly > cap {
-                return "over the self-employment cap of \(Money.format(cap, economy: economy)) per month"
-            }
-        }
-        return nil
+                                economy: EconomyCard, rules: MoneyRules,
+                                playStyle: PlayStyle = .simulation) -> [MoneyVerdict] {
+        IncomeEngine.validate(changes, existing: existing, economy: economy, rules: rules, playStyle: playStyle)
     }
 
     // MARK: Helpers

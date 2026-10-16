@@ -69,12 +69,15 @@ import Testing
         let raise = IncomeStreamChange(action: .change, name: "shop", kind: nil, tier: "skilled", monthlyMinor: 300_000)
         try store.apply(TestChat.turn(newDate: GameDate(year: 2020, month: 6, day: 1), streamChanges: [raise]))
         var s = try store.incomeStreams()
-        #expect(s.count == 1); #expect(s[0].monthlyMinor == 300_000); #expect(s[0].tier == "skilled")
-        #expect(s[0].endedOn == nil)
+        #expect(s.count == 2)
+        #expect(s[0].monthlyMinor == 200_000); #expect(s[0].tier == "entry")
+        #expect(s[0].endedOn == GameDate(year: 2020, month: 6, day: 1))
+        #expect(s[1].monthlyMinor == 300_000); #expect(s[1].tier == "skilled")
+        #expect(s[1].endedOn == nil)
         let quit = IncomeStreamChange(action: .end, name: "shop", kind: nil, tier: nil, monthlyMinor: nil)
         try store.apply(TestChat.turn(newDate: GameDate(year: 2020, month: 9, day: 1), streamChanges: [quit]))
         s = try store.incomeStreams()
-        #expect(s[0].endedOn == GameDate(year: 2020, month: 9, day: 1))
+        #expect(s[1].endedOn == GameDate(year: 2020, month: 9, day: 1))
     }
 
     @Test func castUpdatesUpsertCaseInsensitively() throws {

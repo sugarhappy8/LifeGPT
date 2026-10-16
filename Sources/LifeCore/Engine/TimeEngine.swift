@@ -7,7 +7,7 @@ public enum TimeEngine {
     /// `(character.currentDate, character.currentDate + days]`. Streams pay
     /// from the day they start until the day they end (exclusive).
     public static func plan(days: Int, character: Character, streams: [IncomeStream],
-                            economy: EconomyCard) -> [NewLedgerEntry] {
+                            economy: EconomyCard, household: HouseholdSupport = .independent) -> [NewLedgerEntry] {
         guard days > 0 else { return [] }
         let end = character.currentDate.adding(days: days)
         var boundary = firstOfNextMonth(after: character.currentDate)
@@ -20,17 +20,21 @@ public enum TimeEngine {
                     entries.append(NewLedgerEntry(date: boundary, sourceType: .wage,
                                                   amountMinor: stream.monthlyMinor,
                                                   reason: "Pay from \(stream.name)",
-                                                  counterparty: nil, origin: .engine))
+                                                  counterparty: nil, origin: .engine, accountId: stream.accountId))
                 case .selfEmployment:
                     entries.append(NewLedgerEntry(date: boundary, sourceType: .sideHustle,
                                                   amountMinor: stream.monthlyMinor,
                                                   reason: "Income from \(stream.name)",
-                                                  counterparty: nil, origin: .engine))
+                                                  counterparty: nil, origin: .engine, accountId: stream.accountId))
+                case .business, .rental, .allowance:
+                    let source: SourceType = stream.kind == .business ? .businessProfit : (stream.kind == .rental ? .rentalIncome : .allowance)
+                    entries.append(NewLedgerEntry(date: boundary, sourceType: source, amountMinor: stream.monthlyMinor,
+                        reason: "Monthly income from \(stream.name)", counterparty: nil, origin: .engine, accountId: stream.accountId))
                 }
             }
-            if boundary.ageYears(bornOn: character.birthDate) >= adultAge {
+            if boundary.ageYears(bornOn: character.birthDate) >= adultAge, household.monthlyCost(economy: economy) > 0 {
                 entries.append(NewLedgerEntry(date: boundary, sourceType: .livingCost,
-                                              amountMinor: -economy.monthlyLivingCostMinor,
+                                              amountMinor: -household.monthlyCost(economy: economy),
                                               reason: "Rent and living costs",
                                               counterparty: nil, origin: .engine))
             }
@@ -39,7 +43,7 @@ public enum TimeEngine {
         return entries
     }
 
-    private static func isActive(_ stream: IncomeStream, on date: GameDate) -> Bool {
+    static func isActive(_ stream: IncomeStream, on date: GameDate) -> Bool {
         guard stream.startedOn <= date else { return false }
         if let ended = stream.endedOn { return date < ended }
         return true

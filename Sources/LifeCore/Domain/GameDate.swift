@@ -16,7 +16,7 @@ public struct GameDate: Hashable, Comparable, Codable, Sendable, CustomStringCon
         let parts = iso.split(separator: "-", omittingEmptySubsequences: false)
         guard parts.count == 3,
               let y = Int(parts[0]), let m = Int(parts[1]), let d = Int(parts[2]),
-              (1...12).contains(m), d >= 1, d <= GameDate.daysInMonth(year: y, month: m)
+              (1...9999).contains(y), (1...12).contains(m), d >= 1, d <= GameDate.daysInMonth(year: y, month: m)
         else { return nil }
         self.init(year: y, month: m, day: d)
     }

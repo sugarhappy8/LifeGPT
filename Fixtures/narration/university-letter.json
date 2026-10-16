@@ -1,0 +1,16 @@
+{
+  "resolution": {
+    "zoom": "scene",
+    "time_advance": { "unit": "days", "amount": 0 },
+    "money": [],
+    "income_streams": [],
+    "decisions": [{ "summary": "University letters arrive", "choice": "Review the letters with family", "importance": "major" }],
+    "life_state_changes": [{ "key": "education", "value": "Reviewing university offers" }],
+    "cast_updates": [{ "name": "Daniel", "relation": "father", "notes": "Waiting beside the letters", "status": "alive" }],
+    "events": [{ "title": "The university letters arrive", "importance": "major", "uncanny": false }],
+    "crime_attempt": null
+  },
+  "narration": "Your father looks up as you reach the kitchen. A stack of envelopes rests beside his coffee. He slides the first toward you and waits while you find the opening line.",
+  "author_notes": "Richard is considering university offers with his father Daniel.",
+  "choices": ["I open the first letter."]
+}

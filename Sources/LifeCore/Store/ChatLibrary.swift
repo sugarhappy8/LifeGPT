@@ -69,3 +69,32 @@ public final class ChatLibrary: Sendable {
         }
     }
 }
+
+extension ChatLibrary {
+    public func importChat(from source: URL) throws -> UUID {
+        let id = UUID()
+        do {
+            try LifeStore.copyForImport(from: source, to: fileURL(for: id))
+            let imported = try openChat(id: id)
+            _ = try imported.character()
+            try imported.economy().validate()
+            _ = try imported.positions()
+            try imported.assignIdentity(id)
+            return id
+        } catch { try? deleteChat(id: id); throw error }
+    }
+
+    public func unreadableFiles() throws -> [String] {
+        try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "lifechat" }
+            .compactMap { file in
+                do {
+                    guard UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil else {
+                        return file.lastPathComponent + ": unexpected filename; use Import Life to add it."
+                    }
+                    _ = try LifeStore.open(at: file).character()
+                    return nil
+                } catch { return file.lastPathComponent + ": " + error.localizedDescription }
+            }
+    }
+}

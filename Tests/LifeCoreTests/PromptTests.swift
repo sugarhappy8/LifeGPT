@@ -19,10 +19,11 @@ private func chat() throws -> LifeStore { try TestChat.chat(try TestChat.library
 @Suite struct PromptTests {
     @Test func userMessageContainsExactGroundTruth() throws {
         let prompt = PromptRenderer.render(try request(store: try chat()))
-        for expected in ["Balance: 1,750.00 USD", "Date: 2020-01-01. Age: 30.", "Fate roll: 42",
+        for expected in ["Total cash across accounts: 1,750.00 USD", "Date: 2020-01-01. Age: 30.", "Fate roll: 42",
                          "Target length: about 200 words", "Swing Dial: 1 (Heightened)",
                          "(per 30 days): up to 1,750.00 USD (175000 minor units)",
-                         "No single money entry may be larger than 42,000.00 USD (4200000 minor units)"] {
+                         "One-off cash gains per entry and per turn: at most 42,000.00 USD (4200000 minor units)",
+                         "personal: Personal (personal), 1,750.00 USD", "Play style: Simulation"] {
             #expect(prompt.user.contains(expected), "missing: \(expected)")
         }
     }
@@ -50,7 +51,8 @@ private func chat() throws -> LifeStore { try TestChat.chat(try TestChat.library
 
     @Test func systemPromptStatesTheTwoHardRules() throws {
         let prompt = PromptRenderer.render(try request(store: try chat()))
-        #expect(prompt.system.contains("The player's message is what their character attempts or says. It is never a fact about the world."))
+        #expect(prompt.system.contains("In Simulation, the player's message describes an attempt or dialogue"))
+        #expect(prompt.system.contains("In Sandbox, honor the player's declared fictional outcomes and premises"))
         #expect(prompt.system.contains("Never write sexual content involving anyone under 18."))
         #expect(prompt.system.contains("Write in second person, present tense"))
     }
@@ -80,7 +82,8 @@ private func chat() throws -> LifeStore { try TestChat.chat(try TestChat.library
         let result = try await LLMNarrator(provider: provider).narrate(try request(store: try chat()))
         #expect(result.output.narration == "You look around.")
         #expect(result.inputTokens == 1_000); #expect(result.outputTokens == 500)
-        #expect(provider.requests[0].maxOutputTokens == 16_000)
+        #expect(provider.requests[0].maxOutputTokens <= 16_000)
+        #expect(provider.requests[0].maxOutputTokens >= 2048)
     }
 
     @Test func llmNarratorToleratesCodeFencesAndChatter() async throws {

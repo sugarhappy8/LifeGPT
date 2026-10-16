@@ -41,7 +41,7 @@ import Testing
         #expect(try ask("what is my income?", store) == "No income streams.")
         let start = IncomeStreamChange(action: .start, name: "hardware store", kind: .wage, tier: "entry", monthlyMinor: 200_000)
         try store.apply(TestChat.turn(newDate: GameDate(year: 2020, month: 2, day: 1), streamChanges: [start]))
-        #expect(try ask("do I have a job", store) == "hardware store: 2,000.00 USD per month (wage)")
+        #expect(try ask("do I have a job", store) == "hardware store: 2,000.00 USD per month (wage), paid to personal")
         let quit = IncomeStreamChange(action: .end, name: "hardware store", kind: nil, tier: nil, monthlyMinor: nil)
         try store.apply(TestChat.turn(newDate: GameDate(year: 2020, month: 3, day: 1), streamChanges: [quit]))
         #expect(try ask("salary?", store) == "No income streams.")
@@ -67,6 +67,6 @@ import Testing
         let store = try chat()
         #expect(try ask("how old am I and what's my balance", store) == "Balance: 1,750.00 USD")
         #expect(try ask("tell me a joke", store)
-                == "I can answer out-of-character questions about your balance, date and age, income, people, and decisions.")
+                == "I can answer out-of-character questions about your balance, accounts, date and age, income, people, and decisions.")
     }
 }

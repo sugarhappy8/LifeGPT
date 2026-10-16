@@ -28,7 +28,7 @@ public struct AnthropicProvider: AIProvider, CustomStringConvertible, CustomDebu
     ///   - effort: `output_config.effort`; Opus 5.5 defaults to `medium` when omitted, so it is always sent.
     ///   - useRefusalFallback: asks the API to retry a refused request on a fallback model server-side.
     public init(apiKey: String, model: String = "claude-opus-5-5", effort: String = "medium",
-                useRefusalFallback: Bool = true, transport: any HTTPTransport = URLSession.shared) {
+                useRefusalFallback: Bool = true, transport: any HTTPTransport = PrivateHTTPTransport.shared) {
         self.apiKey = apiKey
         self.model = model
         self.effort = effort
@@ -40,7 +40,8 @@ public struct AnthropicProvider: AIProvider, CustomStringConvertible, CustomDebu
     /// caching, or streaming yet.
     public var capabilities: ProviderCapabilities {
         ProviderCapabilities(maxContextTokens: 1_000_000, supportsJSONSchema: true,
-                             supportsToolCalls: false, supportsCaching: false, supportsStreaming: false)
+                             supportsToolCalls: false, supportsCaching: false, supportsStreaming: false,
+                             prefersFlatResponseSchema: true)
     }
 
     public var description: String { "AnthropicProvider(model: \(model), effort: \(effort))" }
@@ -48,11 +49,7 @@ public struct AnthropicProvider: AIProvider, CustomStringConvertible, CustomDebu
 
     public func complete(_ request: ProviderRequest) async throws -> ProviderResponse {
         let (data, http) = try await transport.send(try urlRequest(for: request))
-        guard (200..<300).contains(http.statusCode) else {
-            let body = String(decoding: data.prefix(1_000), as: UTF8.self)
-                .replacingOccurrences(of: apiKey, with: "[redacted]")
-            throw ProviderError.http(status: http.statusCode, body: body)
-        }
+        try HTTPResponseCheck.validate(data, response: http, secrets: [apiKey])
         return try Self.parse(data)
     }
 

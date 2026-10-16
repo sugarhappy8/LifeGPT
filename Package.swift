@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "LifeCore", targets: ["LifeCore"]),
         .executable(name: "lifelab", targets: ["lifelab"]),
+        .executable(name: "LifeGPT", targets: ["LifeGPT"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1"),
@@ -21,9 +22,11 @@ let package = Package(
             name: "lifelab",
             dependencies: ["LifeCore"]
         ),
+        .executableTarget(name: "LifeGPT", dependencies: ["LifeCore"]),
         .testTarget(
             name: "LifeCoreTests",
             dependencies: ["LifeCore"]
         ),
+        .testTarget(name: "LifeGPTTests", dependencies: ["LifeGPT", "LifeCore"]),
     ]
 )

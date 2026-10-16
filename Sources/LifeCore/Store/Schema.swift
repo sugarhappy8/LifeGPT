@@ -2,7 +2,7 @@ import GRDB
 
 enum Schema {
     /// Stored in `PRAGMA user_version` so a file can be recognized before opening it.
-    static let version = 1
+    static let version = 3
 
     static func migrate(_ queue: DatabaseQueue) throws {
         var migrator = DatabaseMigrator()
@@ -95,6 +95,51 @@ enum Schema {
                     output_tokens INTEGER NOT NULL
                 );
                 PRAGMA user_version = 1;
+                """)
+        }
+        migrator.registerMigration("v2") { db in
+            try db.execute(sql: """
+                ALTER TABLE session ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}';
+                ALTER TABLE session ADD COLUMN author_notes TEXT NOT NULL DEFAULT '';
+                ALTER TABLE session ADD COLUMN choices_json TEXT NOT NULL DEFAULT '[]';
+                ALTER TABLE session ADD COLUMN ended INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE session ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+                CREATE TABLE place_time_brief (
+                    version INTEGER PRIMARY KEY, date TEXT NOT NULL, location TEXT NOT NULL,
+                    text TEXT NOT NULL
+                );
+                CREATE TABLE life_state_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL,
+                    key TEXT NOT NULL, value TEXT NOT NULL
+                );
+                CREATE TABLE opportunity_paths (id TEXT PRIMARY KEY, json TEXT NOT NULL);
+                CREATE TABLE story_threads (id TEXT PRIMARY KEY, json TEXT NOT NULL);
+                CREATE TABLE chapter_summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, through_message_id INTEGER NOT NULL UNIQUE,
+                    date TEXT NOT NULL, text TEXT NOT NULL
+                );
+                CREATE TABLE financial_positions (id TEXT PRIMARY KEY, json TEXT NOT NULL);
+                CREATE INDEX messages_date ON messages(date);
+                CREATE INDEX decisions_date ON decisions(date);
+                UPDATE session SET schema_version = 2;
+                PRAGMA user_version = 2;
+                """)
+        }
+        migrator.registerMigration("v3") { db in
+            try db.execute(sql: """
+                CREATE TABLE accounts (
+                    id TEXT PRIMARY KEY CHECK (length(trim(id)) > 0),
+                    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) > 0),
+                    kind TEXT NOT NULL CHECK (kind IN ('personal', 'business', 'savings'))
+                );
+                INSERT INTO accounts (id, name, kind) VALUES ('personal', 'Personal', 'personal');
+                ALTER TABLE ledger ADD COLUMN account_id TEXT NOT NULL DEFAULT 'personal';
+                ALTER TABLE income_streams ADD COLUMN account_id TEXT NOT NULL DEFAULT 'personal';
+                ALTER TABLE income_streams ADD COLUMN path_id TEXT;
+                CREATE INDEX ledger_account ON ledger(account_id, id);
+                CREATE INDEX income_streams_active_name ON income_streams(name) WHERE ended_on IS NULL;
+                UPDATE session SET schema_version = 3;
+                PRAGMA user_version = 3;
                 """)
         }
         try migrator.migrate(queue)
