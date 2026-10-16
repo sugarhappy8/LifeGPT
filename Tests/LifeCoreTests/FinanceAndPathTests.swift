@@ -78,6 +78,36 @@ import Testing
         let plan = PathEngine.plan(changes, existing: [], date: date, age: 30, economy: economy, balance: 1_000_000, fate: 99)
         #expect(plan.paths.count == 1); #expect(plan.paths.first?.stage == .idea); #expect(plan.rejections.count == 1)
     }
+
+    @Test func narratedCapitalUsesReplacementPersonalAccount() async throws {
+        let library = try TestChat.library()
+        let (_, store) = try TestChat.chat(library)
+        var settings = SessionSettings()
+        settings.household = .familySupported
+        settings.contextLookupMode = .off
+        try store.updateSettings(settings, swingDial: 1, replyLengthWords: 200)
+        try BankingEngine.manage(store: store, openings: [.init(id: "replacement", name: "New personal", kind: .personal)],
+            changes: [], transfers: [], expectedRevision: store.revision())
+        try store.updateBusinessSimulation(accountChanges: [.init(action: .close, accountId: "personal",
+            balanceDestinationAccountId: "replacement", replacementAccountId: "replacement")],
+            expectedRevision: store.revision())
+        let before = try store.accounts().first { $0.id == "replacement" }!.balanceMinor
+        let idea = TurnOutput(resolution: .init(zoom: .scene, timeAdvance: .init(unit: .days, amount: 0),
+            pathUpdates: [.init(id: "shop", title: "Shop", stage: .idea)]), narration: "You plan a shop.")
+        let capital = TurnOutput(resolution: .init(zoom: .summary, timeAdvance: .init(unit: .days, amount: 7),
+            pathUpdates: [.init(id: "shop", title: "Shop", stage: .capital)]), narration: "You invest your savings.")
+        let narrator = ScriptedNarrator(narrate: [.output(idea), .output(capital)])
+        let processor = TurnProcessor(store: store, narrator: narrator, fate: FixedFate([80]))
+        _ = try await processor.play("Plan my shop.")
+        _ = try await processor.play("After seven days, fund the shop from my default personal account.")
+        let entries = try store.ledger(limit: 100).filter { $0.reason.hasPrefix("Business capital:") }
+        let amount = economy.medianMonthlyIncomeMinor / 2
+        #expect(entries.count == 1 && entries.first?.accountId == "replacement")
+        #expect(entries.first?.amountMinor == -amount)
+        #expect(try store.accounts().first { $0.id == "replacement" }?.balanceMinor == before - amount)
+        #expect(try store.accounts().first { $0.id == "personal" }?.status == .closed)
+        #expect(try store.paths().first?.stage == .capital && narrator.repairCalls == 0)
+    }
 }
 
 @Suite struct CrimeTests {

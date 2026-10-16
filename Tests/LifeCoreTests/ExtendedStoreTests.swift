@@ -117,6 +117,6 @@ import Testing
         #expect(try migrated.sessionSettings() == SessionSettings())
         #expect(try migrated.paths().isEmpty)
         #expect(try migrated.revision() == 0)
-        #expect(try queue.read { try Int.fetchOne($0, sql: "PRAGMA user_version") } == 3)
+        #expect(try queue.read { try Int.fetchOne($0, sql: "PRAGMA user_version") } == Schema.version)
     }
 }

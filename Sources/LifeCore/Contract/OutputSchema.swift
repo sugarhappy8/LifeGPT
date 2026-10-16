@@ -60,7 +60,7 @@ public enum OutputSchema {
                   "amount_minor": { "type": "integer" },
                   "reason": { "type": "string" },
                   "counterparty": { "type": "string" },
-                  "account_id": { "type": "string", "description": "Exact destination/source account ID; use personal for personal funds." }
+                  "account_id": { "type": "string", "description": "Exact accessible destination/source account ID; for personal funds use the current default personal account ID supplied in the simulation facts." }
                 }
               }
             },
@@ -162,11 +162,33 @@ extension OutputSchema {
             ["type": "array", "items": ["type": "object", "additionalProperties": false,
              "required": fields.keys.sorted(), "properties": fields]]
         }
+        func patchArray(_ fields: [String: Any], required: [String]) -> [String: Any] {
+            ["type": "array", "items": ["type": "object", "additionalProperties": false,
+             "required": required, "properties": fields]]
+        }
+        let jurisdiction: [String: Any] = ["type": "object", "additionalProperties": false,
+            "required": ["country_id"], "properties": ["country_id": string(), "subdivision_id": string(), "locality": string()]]
+        fields["business_changes"] = patchArray(["action": string(["create", "update", "end"]), "id": string(),
+            "name": string(), "account_id": string(), "jurisdiction": jurisdiction,
+            "legal_structure": string(["incorporated", "sole_proprietor"]), "effective_from": string(),
+            "cost_basis_minor": ["type": "integer"]], required: ["action", "id", "effective_from"])
+        fields["obligation_changes"] = patchArray(["action": string(["start", "change", "end"]), "id": string(),
+            "business_id": string(), "kind": string(["revenue", "payroll", "owner_salary", "expense", "transfer"]),
+            "name": string(), "monthly_minor": ["type": "integer"], "headcount": ["type": "integer"],
+            "from_account_id": string(), "to_account_id": string(), "jurisdiction": jurisdiction, "tax_residence": jurisdiction,
+            "employee_birth_date": string(), "monthly_hours": ["type": "integer"], "effective_from": string()],
+            required: ["action", "id", "effective_from"])
+        fields["account_changes"] = patchArray(["action": string(["close", "rename", "set_default"]), "account_id": string(),
+            "name": string(), "balance_destination_account_id": string(), "replacement_account_id": string(), "effective_from": string()],
+            required: ["action", "account_id", "effective_from"])
+        fields["sale_proposals"] = array(["id": string(), "business_id": string(), "buyer": string(), "price_minor": ["type": "integer"],
+            "ownership_bps": ["type": "integer"], "destination_account_id": string(), "owner_jurisdiction": jurisdiction, "retained_liability_ids": ["type": "array", "items": string()], "effective_from": string()])
+        fields["residence_changes"] = array(["jurisdiction": jurisdiction, "effective_from": string(), "reason": string()])
         fields["path_updates"] = array(["id": string(), "title": string(), "stage": string(OpportunityPath.Stage.allCases.map(\.rawValue)), "notes": string()])
         fields["thread_updates"] = array(["id": string(), "title": string(), "notes": string(), "resolved": ["type": "boolean"]])
         fields["financial_actions"] = array(["action": string(["buy_asset", "sell_asset", "invest", "withdraw", "borrow", "repay"]),
             "id": string(), "name": string(), "amount_minor": ["type": "integer"], "account_id": string()])
-        fields["account_openings"] = array(["id": string(), "name": string(), "kind": string(["personal", "business", "savings"])])
+        fields["account_openings"] = array(["id": string(), "name": string(), "kind": string(["personal", "business", "savings", "custom"])])
         fields["transfers"] = array(["from_account": string(), "to_account": string(), "amount_minor": ["type": "integer"], "reason": string()])
         fields["life_ended"] = ["type": "boolean", "description": "False while the protagonist is alive."]
         fields["crime_attempt"] = ["type": ["object", "null"], "additionalProperties": false,

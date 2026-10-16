@@ -48,8 +48,8 @@ Expected universal output contains `arm64` and `x86_64`. If your installed toolc
 
 The output is named for its architecture, for example:
 
-- `dist/LifeGPT-0.2.0-arm64.dmg`
-- `dist/LifeGPT-0.2.0-universal.dmg`
+- `dist/LifeGPT-0.3.0-arm64.dmg`
+- `dist/LifeGPT-0.3.0-universal.dmg`
 
 It contains **LifeGPT.app**, an **Applications** shortcut, and a short installation note. The user drags the app into Applications. This is a standard disk-image installer, not a privileged `.pkg` installer, and it does not modify system folders beyond that user-initiated copy.
 

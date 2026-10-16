@@ -58,11 +58,20 @@ struct InspectorView: View {
         VStack(alignment: .leading, spacing: 18) {
             SectionLabel(text: "Your finances")
             Text(money(snapshot.balance)).font(.system(size: 24, weight: .medium, design: .rounded)).minimumScaleFactor(0.6).lineLimit(1)
-            Text("Total across all accounts").font(.caption).foregroundStyle(.secondary)
-            fact("Recorded monthly income", money(snapshot.monthlyIncome))
+            Text("Accessible cash across your accounts").font(.caption).foregroundStyle(.secondary)
+            fact("Legacy net income / month", money(snapshot.monthlyIncome))
+            fact("Company cash", money(snapshot.businessCash))
+            fact("Reserved taxes", money(snapshot.reservedTaxes))
+            fact("Gross business revenue / month", money(snapshot.monthlyTotal(.revenue)))
+            fact("Gross owner pay / month", money(snapshot.monthlyTotal(.ownerSalary)))
+            fact("Employee payroll / month", money(snapshot.monthlyTotal(.payroll)))
+            fact("Operating costs / month", money(snapshot.monthlyTotal(.expense)))
+            fact("Unpaid obligations", money(snapshot.unpaidObligations))
+            if snapshot.internalReceivables > 0 { fact("Internal net receivables", money(snapshot.internalReceivables)) }
+            Button("Businesses & payroll…") { model.showBusinessManager = true }.buttonStyle(.bordered).disabled(model.busy)
             Button("Manage finances…") { model.showFinanceManager = true }.buttonStyle(.bordered).disabled(model.busy)
             ForEach(snapshot.accounts) { account in
-                fact(account.name, "\(money(account.balanceMinor)) · \(account.kind.rawValue)")
+                fact(account.name, "\(money(account.balanceMinor)) · \(account.kind.rawValue) · \(account.status.rawValue) · \(account.access.rawValue)")
             }
             HStack { metric("Assets", snapshot.assets); Spacer(); metric("Debt", snapshot.debt) }
             fact("Net worth", money(snapshot.netWorth))
@@ -70,15 +79,15 @@ struct InspectorView: View {
             Text(snapshot.household.label).font(.caption).foregroundStyle(.secondary)
             Button("Change household & difficulty…") { model.showStorySettings = true }.buttonStyle(.link).disabled(model.busy)
             Divider(); SectionLabel(text: "Income")
-            let active = snapshot.streams.filter { $0.endedOn == nil }
-            if active.isEmpty { Text("No income is recorded yet. Describe your earnings in the story or add a source in Manage finances.").font(.callout).foregroundStyle(.secondary) }
+            let active = snapshot.streams.filter { stream in stream.endedOn == nil && snapshot.accessibleAccounts.contains { $0.id == stream.accountId } }
+            if active.isEmpty && snapshot.currentObligations.isEmpty { Text("No income is recorded yet. Describe your earnings in the story or add a source in Manage finances.").font(.callout).foregroundStyle(.secondary) }
             ForEach(active, id: \.name) { stream in
                 fact(stream.name, "\(money(stream.monthlyMinor)) / month → \(snapshot.accounts.first { $0.id == stream.accountId }?.name ?? stream.accountId)")
             }
             Text("Income pays on the first of each month crossed. Transfers move existing funds; they do not create earnings.").font(.caption).foregroundStyle(.secondary)
-            if !snapshot.positions.filter({ $0.principalMinor > 0 }).isEmpty {
+            if !snapshot.ownedPositions.filter({ $0.principalMinor > 0 }).isEmpty {
                 Divider(); SectionLabel(text: "Assets & debts")
-                ForEach(snapshot.positions.filter { $0.principalMinor > 0 }) { position in
+                ForEach(snapshot.ownedPositions.filter { $0.principalMinor > 0 }) { position in
                     VStack(alignment: .leading, spacing: 5) {
                         Text(position.name).font(.callout.weight(.medium))
                         Text("\(position.kind.rawValue.capitalized) · \(money(position.principalMinor))").font(.caption).foregroundStyle(.secondary)

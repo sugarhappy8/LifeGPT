@@ -23,11 +23,18 @@ public final class LifeStore: Sendable {
         try Schema.migrate(queue)
 
         let c = Character(from: character, id: id)
+        if let birth = character.birthJurisdiction { try CountryCatalog.shared.validate(birth, on: c.birthDate) }
+        if let start = character.startingJurisdiction { try CountryCatalog.shared.validate(start, on: c.currentDate) }
         let now = Date().timeIntervalSince1970
         let economyJSON = String(decoding: try JSONEncoder().encode(economy), as: UTF8.self)
         let opening = StartingMoney.balanceMinor(forAge: character.startingAge, economy: economy)
 
         try queue.write { db in
+            if character.birthJurisdiction != nil || character.startingJurisdiction != nil {
+                let geography = LifeGeography(birth: character.birthJurisdiction,
+                    residences: character.startingJurisdiction.map { [ResidenceChange(jurisdiction: $0, effectiveFrom: c.currentDate)] } ?? [])
+                try Self.writeSimulationRecord(db, key: "geography", value: geography)
+            }
             try db.execute(
                 sql: """
                     INSERT INTO session (id, schema_version, created_at, last_played, swing_dial, reply_length_words)
@@ -97,6 +104,9 @@ public final class LifeStore: Sendable {
             var c = Character(from: new, id: UUID(uuidString: row["id"]) ?? UUID())
             c.birthDate = try Self.parseDate(row["birth_date"])
             c.currentDate = try Self.parseDate(row["game_date"])
+            let geography = try Self.simulationRecord(db, key: "geography", default: LifeGeography())
+            c.birthJurisdiction = geography.birth
+            c.startingJurisdiction = geography.residence(on: GameDate(year: c.birthYear + c.startingAge, month: 1, day: 1))
             return c
         }
     }
@@ -119,20 +129,22 @@ public final class LifeStore: Sendable {
     }
 
     public func balanceMinor() throws -> Int64 {
-        try dbQueue.read { try Self.balance($0) }
+        try accounts().filter(\.isAccessible).reduce(Int64(0)) { try CheckedMoney.add($0, $1.balanceMinor) }
     }
 
     /// The personal account comes first; other accounts retain their opening order.
     public func accounts() throws -> [BankAccount] {
         try dbQueue.read { db in
             let balances = try Self.accountBalances(db)
-            return try Row.fetchAll(db, sql: "SELECT * FROM accounts ORDER BY id != 'personal', rowid").map { row in
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM accounts ORDER BY id != 'personal', rowid").map { row in
                 let id: String = row["id"]
                 guard let kind = BankAccount.Kind(rawValue: row["kind"]) else {
                     throw StoreError.corrupt("invalid account kind")
                 }
                 return BankAccount(id: id, name: row["name"], kind: kind, balanceMinor: balances[id] ?? 0)
             }
+            let state = try Self.simulationRecord(db, key: "business", default: BusinessSimulationState())
+            return BusinessEngine.applyingMetadata(state: state, to: rows)
         }
     }
 
@@ -267,6 +279,19 @@ public final class LifeStore: Sendable {
                                  turn.log.inputTokens, turn.log.outputTokens])
 
             try Self.writeTurnMemory(db, turn: turn)
+            if let business = turn.businessState {
+                try Self.writeSimulationRecord(db, key: "business", value: business)
+                try Self.syncAccountNames(db, state: business)
+            }
+            if let geography = turn.geography { try Self.writeGeography(db, geography: geography, date: turn.newDate) }
+            if var economy = turn.relocatedEconomy {
+                try economy.validate()
+                let previousJSON = try String.fetchOne(db, sql: "SELECT json FROM economy_card ORDER BY version DESC LIMIT 1") ?? ""
+                let previous = try JSONDecoder().decode(EconomyCard.self, from: Data(previousJSON.utf8))
+                guard previous.currency == economy.currency, previous.minorUnitsPerUnit == economy.minorUnitsPerUnit else { throw ValidationError.invalid("Relocation must preserve accounting currency.") }
+                economy.version = (try Int.fetchOne(db, sql: "SELECT MAX(version) FROM economy_card") ?? 0) + 1
+                try db.execute(sql: "INSERT INTO economy_card (version, json) VALUES (?, ?)", arguments: [economy.version, try Self.json(economy)])
+            }
             try db.execute(sql: "UPDATE character SET game_date = ?", arguments: [date])
             try db.execute(sql: "UPDATE session SET revision = revision + 1")
             try db.execute(sql: "UPDATE session SET last_played = ?",
@@ -283,6 +308,16 @@ public final class LifeStore: Sendable {
                 throw ValidationError.invalid("This life changed during the edit. Please try again.")
             }
             let date = try Self.parseDate(String.fetchOne(db, sql: "SELECT game_date FROM character") ?? "")
+            let business = try Self.simulationRecord(db, key: "business", default: BusinessSimulationState())
+            let forbidden = Set(business.accountMetadata.filter { $0.status != .active || ($0.access != .owner && $0.access != .manager) }.map(\.id))
+            guard ledger.allSatisfy({ !forbidden.contains($0.accountId) }),
+                  streamChanges.allSatisfy({ $0.action == .end || !forbidden.contains($0.accountId ?? "personal") }) else {
+                throw ValidationError.invalid("Closed, transferred, and reserved accounts cannot be edited or used for payments.")
+            }
+            let managed = Set(business.businesses.map(\.accountId))
+            guard streamChanges.allSatisfy({ $0.action == .end || !managed.contains($0.accountId ?? "personal") }) else {
+                throw ValidationError.invalid("Use business revenue and payroll obligations for managed company accounts.")
+            }
             try Self.writeFinances(db, accountOpenings: accountOpenings, streamChanges: streamChanges,
                                    ledger: ledger, through: date)
             try db.execute(sql: "INSERT INTO events (date, title, importance, uncanny) VALUES (?, ?, 'minor', 0)",
@@ -303,7 +338,7 @@ public final class LifeStore: Sendable {
 
     // MARK: Helpers
 
-    private static func writeFinances(_ db: Database, accountOpenings: [AccountOpening],
+    static func writeFinances(_ db: Database, accountOpenings: [AccountOpening],
                                       streamChanges: [IncomeStreamChange], ledger: [NewLedgerEntry],
                                       through newDate: GameDate) throws {
         try Self.openAccounts(db, openings: accountOpenings)

@@ -82,7 +82,7 @@ struct ChatView: View {
                     Text("\(Money.format(snapshot.balance, economy: snapshot.economy))\(snapshot.accounts.count > 1 ? " total" : "")").font(.system(size: 13, weight: .semibold, design: .monospaced))
                 }.buttonStyle(.plain).foregroundStyle(Color.lifeAccent).help("Open finances")
                 Button { model.inspectorTab = .finances; model.showInspector = true } label: {
-                    Text("Recorded income: \(Money.format(snapshot.monthlyIncome, economy: snapshot.economy))/month").font(.caption)
+                    Text("Legacy net: \(Money.format(snapshot.monthlyIncome, economy: snapshot.economy))/mo · Company gross: \(Money.format(snapshot.monthlyTotal(.revenue), economy: snapshot.economy))/mo").font(.caption)
                 }.buttonStyle(.plain).foregroundStyle(.secondary).help("Check recurring income and destination accounts")
             }
         }.padding(.horizontal, 28).padding(.vertical, 18)

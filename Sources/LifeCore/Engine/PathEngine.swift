@@ -8,7 +8,7 @@ public enum PathEngine {
     }
     public static func plan(_ changes: [PathUpdate], existing: [OpportunityPath], date: GameDate,
                             age: Int, economy: EconomyCard, balance: Int64, fate: Int,
-                            playStyle: PlayStyle = .simulation) -> Plan {
+                            playStyle: PlayStyle = .simulation, personalAccountId: String = "personal") -> Plan {
         var result = Plan(paths: existing)
         var cash = balance
         var seen = Set<String>()
@@ -38,7 +38,8 @@ public enum PathEngine {
                     let required = max(1, economy.medianMonthlyIncomeMinor / 2)
                     guard cash >= required else { reject("capital needs \(required) minor units of your own savings"); continue }
                     cash -= required; path.investedMinor += required
-                    result.ledger.append(FinanceEngine.entry(.expense, -required, "Business capital: \(path.title)", date))
+                    result.ledger.append(FinanceEngine.entry(.expense, -required, "Business capital: \(path.title)", date,
+                        accountId: personalAccountId))
                 }
                 if update.stage == .launch || update.stage == .profit {
                     guard fate >= 40 else { reject("fate \(fate) delays this attempt; keep the current stage and try later"); continue }

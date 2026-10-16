@@ -26,6 +26,7 @@ struct RootView: View {
                         Menu {
                             Button("World & Economy…") { model.showWorldEditor = true }
                             Button("Manage finances…") { model.showFinanceManager = true }
+                            Button("Businesses & payroll…") { model.showBusinessManager = true }
                             Button("How to prompt for roleplay…") { model.showRoleplayGuide = true }
                             Button("Export Save…") { model.exportBackup() }
                             Button("Export Story…") { model.exportStory() }
@@ -48,6 +49,9 @@ struct RootView: View {
         }
         .sheet(isPresented: $model.showFinanceManager) {
             if let snapshot = model.snapshot { FinanceManagerView(snapshot: snapshot).environment(model) }
+        }
+        .sheet(isPresented: $model.showBusinessManager) {
+            if let snapshot = model.snapshot { BusinessManagerView(snapshot: snapshot).environment(model) }
         }
         .sheet(isPresented: $model.showRoleplayGuide) { RoleplayGuideView() }
         .alert("Delete this life permanently?", isPresented: Binding(get: { model.deleteCandidate != nil }, set: { if !$0 { model.deleteCandidate = nil } })) {

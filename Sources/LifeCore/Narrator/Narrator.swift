@@ -1,3 +1,5 @@
+import Foundation
+
 /// The binding facts the narrator is given every turn. Anything here wins over
 /// anything the narrator remembers or the player claims.
 public struct GroundTruth: Equatable, Sendable {
@@ -13,6 +15,8 @@ public struct GroundTruth: Equatable, Sendable {
     public var household: HouseholdSupport = .independent
     public var accounts: [BankAccount] = []
     public var playStyle: PlayStyle = .simulation
+    public var simulationContext: String = ""
+    public var currentJurisdiction: JurisdictionRef? = nil
 
     public init(character: Character, economy: EconomyCard, balanceMinor: Int64, incomeStreams: [IncomeStream],
                 recentLedger: [LedgerEntry], cast: [CastMember], recentDecisions: [DecisionRow],
@@ -44,11 +48,18 @@ public enum GroundTruthBuilder {
         truth.household = HouseholdSupport.resolve(settings: try store.sessionSettings(), state: truth.lifeState, background: character.background)
         truth.accounts = try store.accounts()
         truth.playStyle = try store.sessionSettings().playStyle
+        let geography = try store.geography()
+        truth.currentJurisdiction = geography.residence(on: character.currentDate)
+        if let jurisdiction = truth.currentJurisdiction {
+            truth.lifeState["residence"] = CountryCatalog.shared.displayName(jurisdiction, on: character.currentDate)
+        }
+        truth.simulationContext = try SimulationContext.render(store: store, geography: geography)
         return truth
     }
 }
 
 public struct NarratorRequest: Sendable {
+    public var contextRequestID = UUID()
     public var groundTruth: GroundTruth
     /// Trimmed story input, interpreted according to the selected play style.
     public var playerInput: String
@@ -73,6 +84,7 @@ public struct NarratorResult: Sendable {
     public var output: TurnOutput
     public var inputTokens: Int
     public var outputTokens: Int
+    public var contextNotice: String = ""
 
     public init(output: TurnOutput, inputTokens: Int, outputTokens: Int) {
         self.output = output

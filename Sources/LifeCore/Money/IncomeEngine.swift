@@ -16,7 +16,7 @@ public enum IncomeEngine {
     public static func plan(changes: [IncomeStreamChange], existing: [IncomeStream],
                             start: GameDate, end: GameDate, economy: EconomyCard,
                             playStyle: PlayStyle, accounts: [BankAccount],
-                            paths: [OpportunityPath], rules: MoneyRules = .v1) -> Plan {
+                            paths: [OpportunityPath], rules: MoneyRules = .v1, personalAccountId: String = "personal") -> Plan {
         var plan = Plan(streams: existing)
         guard end >= start else {
             plan.rejections.append("income_streams: effective dates require a nonnegative turn duration")
@@ -80,8 +80,8 @@ public enum IncomeEngine {
                 plan.changes.append(change)
                 continue
             }
-            let projected = resolved(change, current: current, date: date)
-            guard accounts.contains(where: { $0.id == projected.accountId }) else {
+            let projected = resolved(change, current: current, date: date, personalAccountId: personalAccountId)
+            guard accounts.contains(where: { $0.id == projected.accountId && $0.isAccessible && ($0.openedOn == nil || $0.openedOn! <= date) }) else {
                 reject("income destination account does not exist: \(projected.accountId)"); continue
             }
             if let pathId = projected.pathId {
@@ -178,13 +178,13 @@ public enum IncomeEngine {
         return nil
     }
 
-    private static func resolved(_ change: IncomeStreamChange, current: IncomeStream?, date: GameDate) -> IncomeStream {
+    private static func resolved(_ change: IncomeStreamChange, current: IncomeStream?, date: GameDate, personalAccountId: String = "personal") -> IncomeStream {
         let kind = change.kind ?? current?.kind ?? .wage
         var stream = IncomeStream(name: current?.name ?? change.name, kind: kind,
                                   tier: change.tier ?? current?.tier,
                                   monthlyMinor: change.monthlyMinor ?? current?.monthlyMinor ?? 0,
                                   startedOn: date)
-        stream.accountId = change.accountId ?? current?.accountId ?? "personal"
+        stream.accountId = change.accountId ?? current?.accountId ?? personalAccountId
         stream.pathId = change.pathId ?? (kind == .business ? current?.pathId : nil)
         return stream
     }

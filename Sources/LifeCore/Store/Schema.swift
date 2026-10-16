@@ -2,7 +2,7 @@ import GRDB
 
 enum Schema {
     /// Stored in `PRAGMA user_version` so a file can be recognized before opening it.
-    static let version = 3
+    static let version = 4
 
     static func migrate(_ queue: DatabaseQueue) throws {
         var migrator = DatabaseMigrator()
@@ -140,6 +140,21 @@ enum Schema {
                 CREATE INDEX income_streams_active_name ON income_streams(name) WHERE ended_on IS NULL;
                 UPDATE session SET schema_version = 3;
                 PRAGMA user_version = 3;
+                """)
+        }
+        migrator.registerMigration("v4") { db in
+            try db.execute(sql: """
+                CREATE TABLE simulation_records (key TEXT PRIMARY KEY, json TEXT NOT NULL);
+                ALTER TABLE accounts RENAME TO accounts_v3;
+                CREATE TABLE accounts (
+                    id TEXT PRIMARY KEY CHECK (length(trim(id)) > 0),
+                    name TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(name)) > 0),
+                    kind TEXT NOT NULL CHECK (kind IN ('personal', 'business', 'savings', 'tax_reserve', 'custom'))
+                );
+                INSERT INTO accounts SELECT * FROM accounts_v3;
+                DROP TABLE accounts_v3;
+                UPDATE session SET schema_version = 4;
+                PRAGMA user_version = 4;
                 """)
         }
         try migrator.migrate(queue)

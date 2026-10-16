@@ -275,8 +275,8 @@ import Testing
         #expect(try store.incomeStreams().map(\.monthlyMinor) == [200_000, 100_000])
         #expect(try store.incomeStreams().first?.endedOn?.iso == "2019-01-01")
         #expect(try store.recentMessages(limit: 10).first?.text == "An existing life.")
-        #expect(try queue.read { try Int.fetchOne($0, sql: "PRAGMA user_version") } == 3)
-        #expect(try queue.read { try Int.fetchOne($0, sql: "SELECT schema_version FROM session") } == 3)
+        #expect(try queue.read { try Int.fetchOne($0, sql: "PRAGMA user_version") } == Schema.version)
+        #expect(try queue.read { try Int.fetchOne($0, sql: "SELECT schema_version FROM session") } == Schema.version)
         #expect(try LifeStore.open(at: url).accounts() == store.accounts())
     }
 }

@@ -80,6 +80,8 @@ public enum SourceType: String, Codable, Sendable, CaseIterable {
 public struct NewCharacter: Equatable, Sendable {
     public var name: String
     public var birthplace: String
+    public var birthJurisdiction: JurisdictionRef? = nil
+    public var startingJurisdiction: JurisdictionRef? = nil
     public var birthYear: Int
     public var appearance: String
     public var startingAge: Int
@@ -107,6 +109,8 @@ public struct Character: Equatable, Sendable {
     public var id: UUID
     public var name: String
     public var birthplace: String
+    public var birthJurisdiction: JurisdictionRef? = nil
+    public var startingJurisdiction: JurisdictionRef? = nil
     public var birthYear: Int
     public var appearance: String
     public var startingAge: Int
@@ -126,6 +130,8 @@ public struct Character: Equatable, Sendable {
         self.id = id
         name = new.name
         birthplace = new.birthplace
+        birthJurisdiction = new.birthJurisdiction
+        startingJurisdiction = new.startingJurisdiction
         birthYear = new.birthYear
         appearance = new.appearance
         startingAge = new.startingAge

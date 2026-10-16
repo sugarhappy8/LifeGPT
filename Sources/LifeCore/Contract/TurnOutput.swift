@@ -64,6 +64,11 @@ public struct Resolution: Codable, Equatable, Sendable {
     public var crimeAttempt: CrimeAttempt?
     public var accountOpenings: [AccountOpening]?
     public var transfers: [AccountTransfer]?
+    public var businessChanges: [BusinessChange]? = nil
+    public var obligationChanges: [ObligationChange]? = nil
+    public var accountChanges: [AccountLifecycleChange]? = nil
+    public var saleProposals: [SaleProposal]? = nil
+    public var residenceChanges: [ResidenceChange]? = nil
 
     public init(zoom: Zoom, timeAdvance: TimeAdvance, money: [ProposedMoneyEntry] = [],
                 incomeStreams: [IncomeStreamChange] = [], decisions: [DecisionRecord] = [],

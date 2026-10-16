@@ -38,7 +38,7 @@ import Testing
         #expect(try store.positions().isEmpty)
         let prompt = PromptRenderer.render(try #require(narrator.lastRequest))
         #expect(prompt.system.contains("actual membership in that fictional royal family"))
-        #expect(prompt.user.contains(background) && prompt.user.contains("Personal monthly rent and living costs: 0.00 USD"))
+        #expect(prompt.user.contains(background) && prompt.user.contains("Personal monthly rent and living costs: " + Money.format(0, economy: draft.economy)))
     }
 
     @Test func setupModelReceivesRoyalAndHouseholdInstructions() async throws {

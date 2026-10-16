@@ -272,6 +272,9 @@ public struct AppliedTurn: Sendable {
     public var threads: [StoryThread] = []
     public var positions: [FinancialPosition]? = nil
     public var ended: Bool = false
+    public var businessState: BusinessSimulationState? = nil
+    public var geography: LifeGeography? = nil
+    public var relocatedEconomy: EconomyCard? = nil
 
     public init(playerText: String, narration: String, newDate: GameDate, ledger: [NewLedgerEntry],
                 streamChanges: [IncomeStreamChange], decisions: [DecisionRecord],

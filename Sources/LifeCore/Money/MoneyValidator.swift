@@ -17,6 +17,7 @@ public struct MoneyContext: Sendable {
     public var giverStatuses: [String: String] = [:]
     public var rules: MoneyRules
     public var playStyle: PlayStyle = .simulation
+    public var personalAccountId = "personal"
     public var accountBalances: [String: Int64]? = nil
 
     public init(economy: EconomyCard, familyTier: WealthTier, balanceMinor: Int64, elapsedDays: Int,
@@ -49,11 +50,11 @@ public enum MoneyValidator {
     /// One verdict per entry, in order. A running balance and the per-turn
     /// windfall and gift limits carry across entries.
     public static func validate(_ entries: [ProposedMoneyEntry], in ctx: MoneyContext) -> [MoneyVerdict] {
-        var state = TurnState(balances: ctx.accountBalances ?? ["personal": ctx.balanceMinor])
+        var state = TurnState(balances: ctx.accountBalances ?? [ctx.personalAccountId: ctx.balanceMinor])
         return entries.map { entry in
             let verdict = check(entry, ctx: ctx, state: state)
             if verdict == .accepted {
-                let account = entry.accountId ?? "personal"
+                let account = entry.accountId ?? ctx.personalAccountId
                 state.balances[account] = saturatingAdd(state.balances[account, default: 0], entry.amountMinor)
                 switch entry.sourceType {
                 case .windfall:
@@ -85,7 +86,7 @@ public enum MoneyValidator {
 
     private static func check(_ e: ProposedMoneyEntry, ctx: MoneyContext, state: TurnState) -> MoneyVerdict {
         let economy = ctx.economy, rules = ctx.rules
-        let account = e.accountId ?? "personal"
+        let account = e.accountId ?? ctx.personalAccountId
         guard let balance = state.balances[account] else { return .rejected("unknown account: \(account)") }
 
         if e.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .rejected("a concrete reason is required") }

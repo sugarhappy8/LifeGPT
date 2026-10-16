@@ -8,6 +8,7 @@ public struct UsageRecord: Codable, Sendable, Identifiable {
     public var inputTokens: Int
     public var outputTokens: Int
     public var estimatedUSD: Double
+    public var purpose: String? = nil
 }
 
 /// Tracks every successful API response, including repairs, rejected JSON and setup calls.
@@ -65,7 +66,7 @@ public struct MeteredProvider: AIProvider {
             let response = try await base.complete(request)
             let cost = (Double(response.inputTokens) * inputUSDPerMillion + Double(response.outputTokens) * outputUSDPerMillion) / 1_000_000
             try await tracker.record(UsageRecord(id: UUID(), date: Date(), provider: providerName, model: model,
-                inputTokens: response.inputTokens, outputTokens: response.outputTokens, estimatedUSD: cost), reservation: id)
+                inputTokens: response.inputTokens, outputTokens: response.outputTokens, estimatedUSD: cost, purpose: request.purpose), reservation: id)
             return response
         } catch {
             await tracker.release(id); throw error

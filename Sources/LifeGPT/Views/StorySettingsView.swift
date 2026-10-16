@@ -27,6 +27,11 @@ struct StoryControls: View {
             }
             Text("When family covers your costs, automatic rent and living bills are zero. Follow the story uses your recorded living arrangement. A specific choice stays in effect until you change it.")
                 .font(.caption).foregroundStyle(.secondary)
+            Picker("Look up earlier records", selection: $settings.contextLookupMode) {
+                ForEach(ContextLookupMode.allCases, id: \.self) { Text($0.label).tag($0) }
+            }.pickerStyle(.segmented)
+            Text(settings.contextLookupMode.explanation + " Current dates, finances, relationships, and obligations are always included. Extra context requests use your selected model and count toward API usage; prose drafting is a separate setting.")
+                .font(.caption).foregroundStyle(.secondary)
             Divider()
             SectionLabel(text: "The way your story is told")
             Picker("Swing Dial", selection: $swing) {
@@ -92,10 +97,14 @@ struct WorldEditorView: View {
     @State private var text: String
     @State private var generating = false
     @State private var generation: Task<Void, Never>?
+    private let snapshot: LifeSnapshot
+    @State private var jurisdiction: JurisdictionRef?
     @State private var location: String
     @State private var economy: EconomyCard
     @State private var error: String?
     init(snapshot: LifeSnapshot) {
+        self.snapshot = snapshot
+        _jurisdiction = State(initialValue: snapshot.currentResidence)
         _text = State(initialValue: snapshot.world.last?.text ?? "Describe this life's place and era.")
         _location = State(initialValue: snapshot.state["residence"] ?? snapshot.world.last?.location ?? snapshot.character.birthplace)
         _economy = State(initialValue: snapshot.economy)
@@ -106,8 +115,9 @@ struct WorldEditorView: View {
             Text("Update the setting after a move or a change of era. Every revision is kept. Existing balances stay in this life's accounting currency.").font(.callout).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    NationPickerView(selection: $jurisdiction, date: snapshot.character.currentDate)
                     HStack {
-                        TextField("Current location", text: $location).textFieldStyle(.roundedBorder)
+                        Text(location).font(.caption).foregroundStyle(.secondary)
                         if model.settings.provider != .demo {
                             Button(generating ? "Generating…" : "Generate updated draft") { generate() }.disabled(generating)
                         }
@@ -121,19 +131,24 @@ struct WorldEditorView: View {
             HStack {
                 Button(generating ? "Stop" : "Cancel") { if generating { generation?.cancel() } else { dismiss() } }.keyboardShortcut(.cancelAction); Spacer()
                 Button("Save new version") {
-                    do { try model.updateWorld(text: text, location: location, economy: economy); dismiss() }
+                    do { guard let jurisdiction else { throw ValidationError.invalid("Select a preset country and region.") }
+                        try model.updateWorld(text: text, location: location, economy: economy, jurisdiction: jurisdiction,
+                            lifeID: snapshot.character.id, revision: snapshot.revision); dismiss() }
                     catch { self.error = error.localizedDescription }
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(generating)
             }
         }.padding(28).frame(width: 650, height: 720).interactiveDismissDisabled(generating)
-            .onDisappear { generation?.cancel() }
+             .onDisappear { generation?.cancel() }
+            .onChange(of: jurisdiction) { _, ref in
+                if let ref { location = CountryCatalog.shared.displayName(ref, on: snapshot.character.currentDate) }
+            }
     }
     private func generate() {
         generating = true; error = nil
         generation = Task {
             defer { generating = false; generation = nil }
             do {
-                let result = try await model.generateWorld(location: location)
+                let result = try await model.generateWorld(location: location, jurisdiction: jurisdiction)
                 try Task.checkCancellation()
                 text = result.brief; economy = result.economy
             } catch is CancellationError { }

@@ -49,6 +49,7 @@ struct FinanceManagerView: View {
                     .font(.caption).monospacedDigit().foregroundStyle(.secondary)
             }
 
+            Button("Manage businesses, payroll & taxes…") { dismiss(); model.showBusinessManager = true }
             TabView(selection: $tab) {
                 incomeForm.tabItem { Label("Income", systemImage: "calendar.badge.clock") }.tag("income")
                 accountsForm.tabItem { Label("Accounts", systemImage: "building.columns") }.tag("accounts")
@@ -212,7 +213,7 @@ struct FinanceManagerView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(account.name)
-                            Text(account.kind.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                            Text("\(account.kind.rawValue.capitalized) · \(account.status.rawValue) · \(account.access.rawValue)").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -220,7 +221,7 @@ struct FinanceManagerView: View {
             Section {
                 TextField("Account name", text: $accountName, prompt: Text("Website business account"))
                 Picker("Type", selection: $accountKind) {
-                    ForEach(BankAccount.Kind.allCases, id: \.rawValue) { kind in
+                    ForEach(BankAccount.Kind.allCases.filter { $0 != .taxReserve }, id: \.rawValue) { kind in
                         Text(kind.rawValue.capitalized).tag(kind)
                     }
                 }
@@ -242,7 +243,7 @@ struct FinanceManagerView: View {
                         LabeledContent("Available in source", value: money(source.balanceMinor))
                     }
                     Picker("To", selection: $transferToID) {
-                        ForEach(snapshot.accounts.filter { $0.id != transferFromID }) { account in
+                        ForEach(snapshot.accessibleAccounts.filter { $0.id != transferFromID }) { account in
                             Text(account.name).tag(account.id)
                         }
                     }
@@ -288,7 +289,7 @@ struct FinanceManagerView: View {
     private func accountPicker(_ title: String, selection: Binding<String>) -> some View {
         Picker(title, selection: selection) {
             if snapshot.accounts.isEmpty { Text("Open an account first").tag("") }
-            ForEach(snapshot.accounts) { account in Text(account.name).tag(account.id) }
+            ForEach(snapshot.accessibleAccounts) { account in Text(account.name).tag(account.id) }
         }
     }
 

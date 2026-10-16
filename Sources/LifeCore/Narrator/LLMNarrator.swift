@@ -5,23 +5,36 @@ public struct LLMNarrator: Narrator {
     private let provider: any AIProvider
     private let maxOutputTokens: Int
     private let mode: Mode
+    private let contextCache = ContextSelectionCache()
     public init(provider: any AIProvider, maxOutputTokens: Int = 16_000, mode: Mode = .singleCall) {
         self.provider = provider; self.maxOutputTokens = maxOutputTokens; self.mode = mode
     }
-    public func narrate(_ request: NarratorRequest) async throws -> NarratorResult { try await call(request, rejections: []) }
+    public func narrate(_ request: NarratorRequest) async throws -> NarratorResult { try await call(request, rejections: [], isRepair: false) }
     public func repair(_ request: NarratorRequest, rejections: [String]) async throws -> NarratorResult {
-        try await call(request, rejections: rejections)
+        try await call(request, rejections: rejections, isRepair: true)
     }
-    private func call(_ original: NarratorRequest, rejections: [String]) async throws -> NarratorResult {
+    private func call(_ original: NarratorRequest, rejections: [String], isRepair: Bool) async throws -> NarratorResult {
         let floor = provider.capabilities.maxContextTokens <= 65_536 ? 2048 : 8192
         let outputBudget = min(maxOutputTokens, min(provider.capabilities.maxContextTokens / 3, max(floor, original.targetWords * 6 + 2048)))
         let flatEnvelope = provider.capabilities.supportsJSONSchema && provider.capabilities.prefersFlatResponseSchema
         let schema = provider.capabilities.supportsJSONSchema ? (flatEnvelope ? OutputSchema.flatEnvelopeJSON : OutputSchema.json) : nil
         let formatOverhead = flatEnvelope ? OutputSchema.flatEnvelopeJSON + OutputSchema.flatEnvelopeInstructions : ""
-        let request = try ContextBuilder.budget(original, contextTokens: provider.capabilities.maxContextTokens,
+        let preflight = try ContextBuilder.budget(original, contextTokens: provider.capabilities.maxContextTokens,
                                                outputTokens: outputBudget, rejections: rejections, formatOverhead: formatOverhead)
+        // Check essential context before spending anything on retrieval. Repairs
+        // reuse this turn's selection without another provider call. The cache
+        // contains at most one turn and requires an exact request identifier.
+        let selection: ContextSelector.Selection
+        if isRepair { selection = ContextSelector.Selection(request: await contextCache.restore(preflight)) }
+        else {
+            await contextCache.clear()
+            selection = try await ContextSelector.select(preflight, provider: provider)
+        }
+        let request = try ContextBuilder.budget(selection.request, contextTokens: provider.capabilities.maxContextTokens,
+                                               outputTokens: outputBudget, rejections: rejections, formatOverhead: formatOverhead)
+        if !isRepair { await contextCache.store(request) }
         let prompt = PromptRenderer.render(request, rejections: rejections)
-        var inputTokens = 0, outputTokens = 0
+        var inputTokens = selection.inputTokens, outputTokens = selection.outputTokens
         var user = prompt.user
         if mode == .twoStep {
             let prose = try await provider.complete(ProviderRequest(system: prompt.system + "\nFor this drafting stage only, write the narrative prose, not JSON. All game and safety rules still apply.",
@@ -61,8 +74,10 @@ public struct LLMNarrator: Narrator {
                   output.resolution.incomeStreams.count <= IncomeEngine.maximumChangesPerTurn, output.resolution.events.count <= 30 else {
                 throw NarratorError.malformedOutput("empty narration or too many changes")
             }
-            return NarratorResult(output: output, inputTokens: inputTokens + response.inputTokens,
-                                  outputTokens: outputTokens + response.outputTokens)
+            var result = NarratorResult(output: output, inputTokens: inputTokens + response.inputTokens,
+                                        outputTokens: outputTokens + response.outputTokens)
+            result.contextNotice = request.memory.lookupNotice
+            return result
         } catch let error as NarratorError { throw error }
         catch { throw NarratorError.malformedOutput(String(String(describing: error).prefix(200))) }
     }
@@ -82,5 +97,21 @@ public struct LLMNarrator: Narrator {
     static func jsonObject(in text: String) -> String {
         guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end else { return text }
         return String(text[start...end])
+    }
+}
+
+private actor ContextSelectionCache {
+    private var value: (id: UUID, lifeID: UUID, excerpts: [String], notice: String)?
+    func clear() { value = nil }
+    func store(_ request: NarratorRequest) {
+        value = (request.contextRequestID, request.groundTruth.character.id, request.memory.excerpts, request.memory.lookupNotice)
+    }
+    func restore(_ request: NarratorRequest) -> NarratorRequest {
+        guard let value, value.id == request.contextRequestID, value.lifeID == request.groundTruth.character.id else { return request }
+        var restored = request
+        restored.memory.excerpts = value.excerpts
+        restored.memory.lookupNotice = value.notice
+        self.value = nil
+        return restored
     }
 }

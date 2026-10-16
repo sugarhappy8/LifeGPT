@@ -99,13 +99,15 @@ struct SettingsView: View {
             Section("Today") {
                 LabeledContent("Estimated spending", value: model.todayCost.formatted(.currency(code: "USD")))
                 LabeledContent("Requests", value: model.usage.filter { Calendar.current.isDateInToday($0.date) }.count.description)
+                let lookups = model.usage.filter { Calendar.current.isDateInToday($0.date) && $0.purpose == "Context selection" }
+                LabeledContent("Context selection (additional requests)", value: "\(lookups.count) · $\(lookups.reduce(0) { $0 + $1.estimatedUSD }.formatted(.number.precision(.fractionLength(4)))) estimated")
                 Text("Every completed provider response is recorded, including setup, connection tests, corrections, and output that failed validation. Local/demo calls do not incur API charges.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Recent requests") {
                 if model.usage.isEmpty { Text("No cloud requests recorded.").foregroundStyle(.secondary) }
                 ForEach(model.usage.suffix(15).reversed()) { entry in
                     VStack(alignment: .leading, spacing: 4) {
-                        HStack { Text(entry.model).lineLimit(1); Spacer(); Text(entry.estimatedUSD.formatted(.currency(code: "USD").precision(.fractionLength(4)))) }
+                        HStack { Text((entry.purpose.map { $0 + " · " } ?? "") + entry.model).lineLimit(1); Spacer(); Text(entry.estimatedUSD.formatted(.currency(code: "USD").precision(.fractionLength(4)))) }
                         Text("\(entry.date.formatted(date: .abbreviated, time: .shortened)) · \(entry.inputTokens.grouped) in / \(entry.outputTokens.grouped) out").font(.caption).foregroundStyle(.secondary)
                     }
                 }

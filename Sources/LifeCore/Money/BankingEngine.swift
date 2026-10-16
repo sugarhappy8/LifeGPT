@@ -11,9 +11,12 @@ public enum BankingEngine {
         for request in requests.prefix(20) {
             let name = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard request.id.range(of: #"^[a-z0-9][a-z0-9_-]{0,79}$"#, options: .regularExpression) != nil,
-                  !name.isEmpty, name.count <= 100, result.accounts.count < 20,
+                  !name.isEmpty, name.count <= 100, result.accounts.filter({ $0.status == .active }).count < 20,
                   !result.accounts.contains(where: { $0.id == request.id || $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
                 result.rejections.append("account_openings: use a unique lowercase ID and name, with at most 20 accounts"); continue
+            }
+            guard request.kind != .taxReserve else {
+                result.rejections.append("tax-reserve accounts are created by the business engine"); continue
             }
             let opening = AccountOpening(id: request.id, name: name, kind: request.kind)
             result.openings.append(opening)
@@ -53,9 +56,9 @@ public enum BankingEngine {
         let opened = open(openings, existing: try store.accounts())
         let income = IncomeEngine.plan(changes: changes, existing: try store.incomeStreams(), start: character.currentDate,
             end: character.currentDate, economy: try store.economy(), playStyle: try store.sessionSettings().playStyle,
-            accounts: opened.accounts, paths: try store.paths())
+            accounts: opened.accounts, paths: try store.paths(), personalAccountId: try store.businessSimulation().defaultPersonalAccountId)
         var plan = FinanceEngine.Plan(positions: [], balance: 0,
-            accountBalances: Dictionary(uniqueKeysWithValues: opened.accounts.map { ($0.id, $0.balanceMinor) }))
+            accountBalances: Dictionary(uniqueKeysWithValues: opened.accounts.filter(\.isAccessible).map { ($0.id, $0.balanceMinor) }))
         plan = try transfer(transfers, date: character.currentDate, plan: plan)
         let errors = opened.rejections + income.rejections + plan.rejections
         guard errors.isEmpty else { throw ValidationError.invalid(errors.joined(separator: "\n")) }

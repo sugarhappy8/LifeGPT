@@ -25,13 +25,18 @@ public enum ContinuityValidator {
             }
             result.cast.append(update)
         }
-        let reserved = Set(["money", "balance", "age", "date", "birth_year", "birth_date", "family_wealth_tier", "currency"])
+        let reserved = Set(["money", "balance", "age", "date", "birth_year", "birth_date", "family_wealth_tier", "currency", "country", "country_id", "jurisdiction", "tax_profile", "account_access", "business_ownership"])
         for original in resolution.lifeStateChanges.prefix(30) {
             var state = original
             state.key = state.key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: " ", with: "_")
             guard !state.key.isEmpty, state.key.count <= 60, state.value.count <= 4000,
                   !reserved.contains(state.key.lowercased()), !state.key.hasPrefix("_engine_") else {
                 result.rejections.append("life_state cannot override engine-owned facts: \(state.key)"); continue
+            }
+            if state.key == "residence", let jurisdiction = truth.currentJurisdiction {
+                if state.value == CountryCatalog.shared.displayName(jurisdiction, on: truth.character.currentDate) { continue }
+                result.rejections.append("Use residence_changes with a preset jurisdiction and effective date to move; residence prose cannot override it.")
+                continue
             }
             if state.key == "household_support" {
                 state.value = state.value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

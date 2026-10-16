@@ -9,7 +9,7 @@ public enum OOCResponder {
 
         if asks(["account", "accounts", "bank", "banking"]) {
             let economy = try store.economy()
-            return try store.accounts().map { "\($0.name) [\($0.id)]: \(Money.format($0.balanceMinor, economy: economy))" }.joined(separator: "\n")
+            return try store.accounts().map { "\($0.name) [\($0.id)]: \(Money.format($0.balanceMinor, economy: economy)) · \($0.status.rawValue) / \($0.access.rawValue) · owner \($0.ownerId)" }.joined(separator: "\n")
         }
         if asks(["balance", "money", "cash"]) {
             return "Balance: \(Money.format(try store.balanceMinor(), economy: try store.economy()))"
@@ -20,8 +20,14 @@ public enum OOCResponder {
         }
         if asks(["income", "job", "salary", "profit", "revenue", "earnings"]) {
             let economy = try store.economy()
-            let lines = try store.incomeStreams().filter { $0.endedOn == nil }.map { stream in
+            let accounts = try store.accounts()
+            let date = try store.character().currentDate
+            let business = try store.businessSimulation()
+            var lines = try store.incomeStreams().filter { stream in stream.endedOn == nil && accounts.contains { $0.id == stream.accountId && $0.isAccessible } }.map { stream in
                 return "\(stream.name): \(Money.format(stream.monthlyMinor, economy: economy)) per month (\(stream.kind.rawValue)), paid to \(stream.accountId)"
+            }
+            lines += business.obligations.filter { $0.effectiveFrom <= date && ($0.endedOn == nil || $0.endedOn! > date) }.map {
+                "\($0.name): \(Money.format($0.monthlyMinor * Int64($0.headcount), economy: economy)) gross/month (\($0.kind.rawValue)), business \($0.businessId). Accrues in arrears; net pay and taxes are separate."
             }
             return lines.isEmpty ? "No income streams." : lines.joined(separator: "\n")
         }

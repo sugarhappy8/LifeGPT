@@ -7,6 +7,7 @@ public struct TurnResult: Equatable, Sendable {
     public var text: String
     public var rejections: [String]
     public var repaired: Bool
+    public var contextNotice: String = ""
 
     public init(kind: Kind, text: String, rejections: [String] = [], repaired: Bool = false) {
         self.kind = kind
@@ -147,6 +148,9 @@ public actor TurnProcessor {
             events: resolution.events + evaluation.engineEvents,
             log: TurnLog(fate: fateRoll, rejections: allRejections, repaired: repairUsed,
                          inputTokens: inputTokens, outputTokens: outputTokens))
+        turn.businessState = evaluation.businessState
+        turn.geography = (result.output.resolution.residenceChanges ?? []).isEmpty ? nil : evaluation.geography
+        turn.relocatedEconomy = evaluation.relocatedEconomy
         turn.expectedRevision = revision
         turn.accountOpenings = evaluation.accountOpenings
         turn.authorNotes = result.output.authorNotes ?? ""
@@ -156,7 +160,9 @@ public actor TurnProcessor {
         try store.apply(turn)
         // Compaction is an optional context optimization; the committed turn must remain successful if it fails.
         try? MemoryCompactor.compactIfNeeded(store: store)
-        return TurnResult(kind: .narrated, text: narration, rejections: evaluation.rejections, repaired: repairUsed)
+        var resultValue = TurnResult(kind: .narrated, text: narration, rejections: evaluation.rejections, repaired: repairUsed)
+        resultValue.contextNotice = result.contextNotice
+        return resultValue
     }
 
     // MARK: Validation
@@ -175,6 +181,9 @@ public actor TurnProcessor {
         var engineState: [LifeStateChange] = []
         var engineEvents: [EventRecord] = []
         var accountOpenings: [AccountOpening] = []
+        var businessState: BusinessSimulationState? = nil
+        var geography: LifeGeography? = nil
+        var relocatedEconomy: EconomyCard? = nil
     }
 
     /// Checks a narrator output without writing anything. Rejected pieces are
@@ -208,11 +217,24 @@ public actor TurnProcessor {
         let opened = BankingEngine.open(resolution.accountOpenings ?? [], existing: truth.accounts)
         evaluation.accountOpenings = opened.openings
         evaluation.rejections += opened.rejections
+        let geography = try store.geography()
+        do { evaluation.geography = try geography.applying(resolution.residenceChanges ?? [], from: start, through: evaluation.newDate) }
+        catch { evaluation.rejections.append(error.localizedDescription) }
+        do {
+            try store.validateAccountClosures(resolution.accountChanges ?? [], incomeChanges: resolution.incomeStreams)
+            try store.validateSaleRetentions(resolution.saleProposals ?? [])
+        }
+        catch { evaluation.rejections.append(error.localizedDescription) }
+        let prepared = try BusinessEngine.prepare(state: store.businessSimulation(), accounts: opened.accounts,
+            start: start, end: evaluation.newDate, economy: truth.economy,
+            businessChanges: resolution.businessChanges ?? [], obligationChanges: resolution.obligationChanges ?? [],
+            accountChanges: resolution.accountChanges ?? [], saleProposals: resolution.saleProposals ?? [], revision: store.revision() + 1)
+        evaluation.rejections += prepared.rejections
         let newPaths = (resolution.pathUpdates ?? []).filter { update in !oldPaths.contains { $0.id == update.id } }
             .map { OpportunityPath(id: $0.id, title: $0.title, stage: $0.stage, startedOn: evaluation.newDate) }
         let income = IncomeEngine.plan(changes: resolution.incomeStreams, existing: truth.incomeStreams,
             start: start, end: evaluation.newDate, economy: truth.economy, playStyle: truth.playStyle,
-            accounts: opened.accounts, paths: oldPaths + newPaths, rules: rules)
+            accounts: prepared.accounts, paths: oldPaths + newPaths, rules: rules, personalAccountId: prepared.state.defaultPersonalAccountId)
         evaluation.streams = income.changes
         evaluation.rejections += income.rejections
         for change in income.changes where change.action != .end {
@@ -222,9 +244,18 @@ public actor TurnProcessor {
                 evaluation.rejections.append("income_streams: young children cannot hold jobs")
             }
         }
-        var finances = try FinanceEngine.settle(to: evaluation.newDate, character: truth.character,
-            streams: income.streams, economy: truth.economy, balance: truth.balanceMinor,
-            positions: store.positions(), paths: oldPaths, household: truth.household, accounts: opened.accounts)
+        // Creating a managed business is an explicit accounting conversion, never
+        // an implicit second deposit over an existing net-income stream.
+        let managed = Set(prepared.state.businesses.map(\.accountId))
+        for stream in income.streams where managed.contains(stream.accountId) && (stream.endedOn == nil || stream.endedOn! > evaluation.newDate) {
+            evaluation.rejections.append("End legacy income '\(stream.name)' when converting its account to managed gross business accounting.")
+        }
+        let settled = try SimulationSettlement.run(prepared: prepared, character: truth.character, end: evaluation.newDate,
+            streams: income.streams, economy: truth.economy, positions: store.positions(), paths: oldPaths, household: truth.household, geography: evaluation.geography, originalResidence: truth.currentJurisdiction)
+        evaluation.businessState = settled.business
+        evaluation.relocatedEconomy = settled.economy != truth.economy ? settled.economy : nil
+        evaluation.accountOpenings += settled.openings
+        var finances = settled.finances
         let crime = CrimeEngine.resolve(resolution.crimeAttempt, age: truth.character.ageYears, date: evaluation.newDate,
             fate: fate, economy: truth.economy, lastAttempt: truth.lifeState["_engine_last_crime_date"].flatMap(GameDate.init(iso:)))
         finances = try FinanceEngine.applyCrime(crime, date: evaluation.newDate, to: finances)
@@ -256,6 +287,7 @@ public actor TurnProcessor {
                                    daysSinceLastGiftByGiver: giftGaps, daysSinceLastAnyGift: daysSinceAnyGift,
                                    rules: rules)
         context.playStyle = truth.playStyle
+        context.personalAccountId = finances.personalAccountId
         context.accountBalances = finances.accountBalances
         let familyWords = ["mother", "father", "parent", "sister", "brother", "sibling", "uncle", "aunt", "grandparent", "grandmother", "grandfather", "cousin", "relative", "family", "spouse"]
         for person in truth.cast {
@@ -280,7 +312,7 @@ public actor TurnProcessor {
                     evaluation.money.append(entry)
                     accepted.append(NewLedgerEntry(date: evaluation.newDate, sourceType: entry.sourceType,
                         amountMinor: entry.amountMinor, reason: entry.reason, counterparty: entry.counterparty,
-                        origin: .narrator, accountId: entry.accountId ?? "personal"))
+                        origin: .narrator, accountId: entry.accountId ?? finances.personalAccountId))
                 case .rejected(let reason):
                     evaluation.rejections.append("money \(entry.sourceType.rawValue) \(entry.amountMinor): \(reason)")
                 }
@@ -292,7 +324,8 @@ public actor TurnProcessor {
         }
         let ageAtEnd = evaluation.newDate.ageYears(bornOn: truth.character.birthDate)
         let pathPlan = PathEngine.plan(resolution.pathUpdates ?? [], existing: oldPaths, date: evaluation.newDate,
-            age: ageAtEnd, economy: truth.economy, balance: finances.balance, fate: fate, playStyle: truth.playStyle)
+            age: ageAtEnd, economy: truth.economy, balance: finances.balance, fate: fate, playStyle: truth.playStyle,
+            personalAccountId: finances.personalAccountId)
         finances = try FinanceEngine.record(pathPlan.ledger, to: finances)
         finances = try FinanceEngine.actions(resolution.financialActions ?? [], date: evaluation.newDate,
             age: ageAtEnd, economy: truth.economy, streams: income.streams, plan: finances, household: truth.household)

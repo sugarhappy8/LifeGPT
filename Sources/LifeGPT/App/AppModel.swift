@@ -16,6 +16,7 @@ final class AppModel {
     var showStorySettings = false
     var showWorldEditor = false
     var showFinanceManager = false
+    var showBusinessManager = false
     var showRoleplayGuide = false
     var error: String?
     var information: String?
@@ -98,6 +99,22 @@ final class AppModel {
             transfers: transfers, expectedRevision: expectedRevision)
         try reload()
     }
+    func updateBusinesses(businessChanges: [BusinessChange] = [], obligations: [ObligationChange] = [],
+                          accounts: [AccountLifecycleChange] = [], sales: [SaleProposal] = [], convertLegacy: Bool = false,
+                          expectedLifeID: UUID, expectedRevision: Int) throws {
+        guard !busy, let store, try store.character().id == expectedLifeID else { throw ValidationError.invalid("Reopen finances for the active life after the current turn finishes.") }
+        try store.updateBusinessSimulation(businessChanges: businessChanges, obligationChanges: obligations,
+            accountChanges: accounts, saleProposals: sales, convertLegacyIncome: convertLegacy, expectedRevision: expectedRevision)
+        try reload()
+    }
+    func updateFiscalProfile(jurisdiction: JurisdictionRef, values: FiscalOverrides, lifeID: UUID, revision: Int) throws {
+        guard !busy, let store, try store.character().id == lifeID else { throw ValidationError.invalid("Reopen tax settings for the active life.") }
+        try store.updateFiscalOverride(jurisdiction: jurisdiction, values: values, expectedRevision: revision); try reload()
+    }
+    func confirmSale(_ id: String, lifeID: UUID, revision: Int) throws {
+        guard !busy, let store, try store.character().id == lifeID else { throw ValidationError.invalid("Open the sale's life before confirming.") }
+        try store.confirmBusinessSale(id: id, expectedRevision: revision); try reload()
+    }
     func loadEarlier() {
         messageLimit += 100
         do { try reload() } catch { self.error = error.localizedDescription }
@@ -145,11 +162,11 @@ final class AppModel {
         do { let draft = try await generator.generate(character); await refreshUsage(); return draft }
         catch { await refreshUsage(); throw error }
     }
-    func generateWorld(location: String) async throws -> WorldDraft {
+    func generateWorld(location: String, jurisdiction: JurisdictionRef? = nil) async throws -> WorldDraft {
         guard let snapshot else { throw ValidationError.invalid("Open a life first.") }
         let generator = try WorldGenerator(provider: provider())
         do {
-            let draft = try await generator.generate(location: location, character: snapshot.character, economy: snapshot.economy)
+            let draft = try await generator.generate(location: location, character: snapshot.character, economy: snapshot.economy, jurisdiction: jurisdiction)
             await refreshUsage(); return draft
         } catch { await refreshUsage(); throw error }
     }
@@ -217,7 +234,8 @@ final class AppModel {
         turnTask = Task {
             defer { busy = false; pendingText = nil; turnTask = nil }
             do {
-                _ = try await processor.play(attempt.text, targetWords: attempt.targetWords, skipTime: attempt.skipTime)
+                let result = try await processor.play(attempt.text, targetWords: attempt.targetWords, skipTime: attempt.skipTime)
+                if !result.contextNotice.isEmpty { information = result.contextNotice }
             } catch is CancellationError {
                 composer = attempt.text; information = "The reply was cancelled. Your life was not changed."
                 await refreshUsage()
@@ -249,9 +267,11 @@ final class AppModel {
         guard !busy else { throw ValidationError.invalid("Wait for the current turn to finish.") }
         try store?.updateSettings(settings, swingDial: swing, replyLengthWords: words); try reload()
     }
-    func updateWorld(text: String, location: String, economy: EconomyCard) throws {
+    func updateWorld(text: String, location: String, economy: EconomyCard, jurisdiction: JurisdictionRef? = nil, lifeID: UUID? = nil, revision: Int? = nil) throws {
         guard !busy, let store, let snapshot else { return }
-        try store.saveWorld(brief: PlaceTimeBrief(date: snapshot.character.currentDate, location: location, text: text), economy: economy)
+        guard lifeID == nil || snapshot.character.id == lifeID else { throw ValidationError.invalid("Reopen the world editor for the current life.") }
+        try store.saveWorld(brief: PlaceTimeBrief(date: snapshot.character.currentDate, location: location, text: text), economy: economy,
+            jurisdiction: jurisdiction, expectedRevision: revision)
         try reload()
     }
     func deleteLife(_ id: UUID) {

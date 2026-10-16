@@ -30,12 +30,14 @@ public struct ProviderRequest: Sendable {
     public var maxOutputTokens: Int
     /// A JSON Schema the reply must satisfy, when the provider supports it.
     public var jsonSchema: String?
+    public var purpose: String?
 
-    public init(system: String, user: String, maxOutputTokens: Int, jsonSchema: String?) {
+    public init(system: String, user: String, maxOutputTokens: Int, jsonSchema: String?, purpose: String? = nil) {
         self.system = system
         self.user = user
         self.maxOutputTokens = maxOutputTokens
         self.jsonSchema = jsonSchema
+        self.purpose = purpose
     }
 }
 

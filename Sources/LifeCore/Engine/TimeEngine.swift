@@ -7,7 +7,7 @@ public enum TimeEngine {
     /// `(character.currentDate, character.currentDate + days]`. Streams pay
     /// from the day they start until the day they end (exclusive).
     public static func plan(days: Int, character: Character, streams: [IncomeStream],
-                            economy: EconomyCard, household: HouseholdSupport = .independent) -> [NewLedgerEntry] {
+                            economy: EconomyCard, household: HouseholdSupport = .independent, personalAccountId: String = "personal") -> [NewLedgerEntry] {
         guard days > 0 else { return [] }
         let end = character.currentDate.adding(days: days)
         var boundary = firstOfNextMonth(after: character.currentDate)
@@ -36,7 +36,7 @@ public enum TimeEngine {
                 entries.append(NewLedgerEntry(date: boundary, sourceType: .livingCost,
                                               amountMinor: -household.monthlyCost(economy: economy),
                                               reason: "Rent and living costs",
-                                              counterparty: nil, origin: .engine))
+                                              counterparty: nil, origin: .engine, accountId: personalAccountId))
             }
             boundary = boundary.adding(months: 1)
         }

@@ -7,9 +7,10 @@ public struct SessionSettings: Codable, Equatable, Sendable {
     public var difficulty = 50
     public var household: HouseholdSupport = .automatic
     public var playStyle: PlayStyle = .simulation
+    public var contextLookupMode: ContextLookupMode = .automatic
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case voiceBible, automaticLength, contentTone, difficulty, household, playStyle }
+    private enum CodingKeys: String, CodingKey { case voiceBible, automaticLength, contentTone, difficulty, household, playStyle, contextLookupMode }
     public init(from decoder: any Decoder) throws {
         self.init()
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -19,6 +20,7 @@ public struct SessionSettings: Codable, Equatable, Sendable {
         difficulty = min(100, max(0, try values.decodeIfPresent(Int.self, forKey: .difficulty) ?? 50))
         household = try values.decodeIfPresent(HouseholdSupport.self, forKey: .household) ?? .automatic
         playStyle = try values.decodeIfPresent(PlayStyle.self, forKey: .playStyle) ?? .simulation
+        contextLookupMode = try values.decodeIfPresent(ContextLookupMode.self, forKey: .contextLookupMode) ?? .automatic
     }
 }
 

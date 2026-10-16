@@ -48,13 +48,28 @@ extension LifeStore {
         }
     }
     /// The review screen is the only writer of economy versions. Narration cannot change the currency or prices.
-    public func saveWorld(brief: PlaceTimeBrief, economy: EconomyCard) throws {
+    public func saveWorld(brief: PlaceTimeBrief, economy: EconomyCard, jurisdiction: JurisdictionRef? = nil, expectedRevision: Int? = nil) throws {
+        let previousGeography = try geography()
+        var newGeography = previousGeography
+        var brief = brief
+        if let jurisdiction {
+            newGeography = try previousGeography.applying([ResidenceChange(jurisdiction: jurisdiction, effectiveFrom: brief.date)], from: brief.date, through: brief.date)
+            brief.location = CountryCatalog.shared.displayName(jurisdiction, on: brief.date)
+        } else if let existing = previousGeography.residence(on: brief.date),
+                  previousGeography.residences.first?.reason != "Matched legacy location; no past tax assumptions" {
+            guard brief.location == CountryCatalog.shared.displayName(existing, on: brief.date) else {
+                throw ValidationError.invalid("Choose a preset jurisdiction to move this life; descriptive location text cannot change residence.")
+            }
+        }
         try economy.validate()
         guard !brief.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !brief.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, brief.text.count <= 24_000 else {
             throw ValidationError.invalid("The world brief needs a location and up to 24,000 characters of context.")
         }
         try dbQueue.write { db in
+            if let expectedRevision, try Int.fetchOne(db, sql: "SELECT revision FROM session") != expectedRevision {
+                throw ValidationError.invalid("This life changed. Reopen the world editor before saving.")
+            }
             if let old = try String.fetchOne(db, sql: "SELECT json FROM economy_card ORDER BY version DESC LIMIT 1") {
                 let previous = try JSONDecoder().decode(EconomyCard.self, from: Data(old.utf8))
                 guard previous.currency == economy.currency, previous.minorUnitsPerUnit == economy.minorUnitsPerUnit else {
@@ -66,6 +81,7 @@ extension LifeStore {
             try db.execute(sql: "INSERT INTO economy_card (version, json) VALUES (?, ?)", arguments: [next, try Self.json(card)])
             try db.execute(sql: "INSERT INTO place_time_brief (version, date, location, text) VALUES (?, ?, ?, ?)",
                            arguments: [next, brief.date.iso, brief.location, brief.text])
+            if jurisdiction != nil { try Self.writeGeography(db, geography: newGeography, date: brief.date) }
             try db.execute(sql: "UPDATE session SET revision = revision + 1")
         }
     }

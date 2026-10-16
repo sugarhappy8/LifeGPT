@@ -6,6 +6,7 @@ struct NewLifeView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var character = NewCharacter(name: "", birthplace: "", birthYear: 1995, appearance: "", startingAge: 18, background: "")
     @State private var storySettings = SessionSettings()
+    @State private var sameStartingPlace = true
     @State private var draft = SetupDraft.manual(for: NewCharacter(name: "", birthplace: "", birthYear: 1995, appearance: "", startingAge: 18, background: nil))
     @State private var reviewing = false
     @State private var generating = false
@@ -27,7 +28,7 @@ struct NewLifeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     if reviewing {
-                        NoticeBar(text: generated ? "This is an AI-generated draft. Review its historical assumptions and prices; you can edit them below." : "Manual setup uses sample USD prices. Adjust the currency, amounts, and setting for this life before beginning.") {}
+                        NoticeBar(text: generated ? "This is an AI-generated draft. Review its historical assumptions and prices; you can edit them below." : "Manual setup uses estimates for your selected nation and story date. Review the local currency, amounts, and historical assumptions before beginning.") {}
                         SetupReviewView(draft: $draft)
                         Divider()
                         SectionLabel(text: "Your own starting savings")
@@ -63,15 +64,21 @@ struct NewLifeView: View {
     private var creationFields: some View {
         VStack(alignment: .leading, spacing: 22) {
             SectionLabel(text: "The essentials")
-            HStack(spacing: 18) {
-                labeled("Name") { TextField("Your character's name", text: $character.name) }
-                labeled("Birthplace") { TextField("City, country", text: $character.birthplace) }
-            }
+            labeled("Name") { TextField("Your character's name", text: $character.name) }
             HStack(spacing: 18) {
                 labeled("Birth year") { TextField("Year", value: $character.birthYear, format: .number.grouping(.never)) }
                 labeled("Starting age") { Stepper(value: $character.startingAge, in: 0...99) { Text("\(character.startingAge) years old") } }
             }
             Text("Your story begins in \(((1...9000).contains(character.birthYear) ? character.birthYear + character.startingAge : 0).description). Birthdays are January 1.").font(.caption).foregroundStyle(.secondary)
+            labeled("Birthplace") {
+                NationPickerView(selection: $character.birthJurisdiction, date: birthDate)
+            }
+            Toggle("Begin the story in the same place", isOn: $sameStartingPlace)
+            if !sameStartingPlace {
+                labeled("Starting residence") {
+                    NationPickerView(selection: $character.startingJurisdiction, date: storyDate)
+                }
+            }
             labeled("Physical description") { TextField("Appearance, style, distinguishing details…", text: $character.appearance, axis: .vertical).lineLimit(2...4) }
             labeled("Background · optional") {
                 TextField("Family, personality, history, hopes. What has shaped this person?", text: Binding(get: { character.background ?? "" }, set: { character.background = $0 }), axis: .vertical).lineLimit(4...7)
@@ -85,12 +92,23 @@ struct NewLifeView: View {
     private func labeled<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 7) { Text(label).font(.caption.weight(.medium)); content() }.frame(maxWidth: .infinity, alignment: .leading)
     }
+    private var birthDate: GameDate { GameDate(year: max(1, min(9000, character.birthYear)), month: 1, day: 1) }
+    private var storyDate: GameDate { GameDate(year: birthDate.year + character.startingAge, month: 1, day: 1) }
+    private func prepareCharacter() throws {
+        guard let birth = character.birthJurisdiction else { throw ValidationError.invalid("Choose a preset nation for the birthplace.") }
+        try CountryCatalog.shared.validate(birth, on: birthDate)
+        if sameStartingPlace { character.startingJurisdiction = birth }
+        guard let start = character.startingJurisdiction else { throw ValidationError.invalid("Choose a preset nation for the starting residence.") }
+        try CountryCatalog.shared.validate(start, on: storyDate)
+        character.birthplace = CountryCatalog.shared.displayName(birth, on: birthDate)
+        try character.validate()
+    }
     private func prepareManual() {
-        do { try character.validate(); draft = .manual(for: character); generated = false; reviewing = true; error = nil }
+        do { try prepareCharacter(); draft = .manual(for: character); generated = false; reviewing = true; error = nil }
         catch { self.error = error.localizedDescription }
     }
     private func generate() {
-        do { try character.validate() } catch { self.error = error.localizedDescription; return }
+        do { try prepareCharacter() } catch { self.error = error.localizedDescription; return }
         generating = true; error = nil
         generation = Task {
             defer { generating = false; generation = nil }
