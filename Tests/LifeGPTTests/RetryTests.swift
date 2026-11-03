@@ -139,3 +139,120 @@ private actor RetryNarrator: Narrator {
     }
     func repair(_ request: NarratorRequest, rejections: [String]) async throws -> NarratorResult { try await narrate(request) }
 }
+
+@Suite(.serialized) @MainActor struct AppModelFixTests {
+    @Test func tolerantSettingsAndIndependentStartup() throws {
+        for (name, body) in [("partial", "{\"provider\":\"anthropic\"}"), ("corrupt", "{")] {
+            let r = try rig(); defer { try? FileManager.default.removeItem(at: r.paths.root) }
+            try Data(body.utf8).write(to: r.paths.settings)
+            try Data("garbage".utf8).write(to: r.paths.usage)
+            let model = AppModel(paths: r.paths)
+            #expect(model.lives.count == 1 && model.selection != nil && model.snapshot != nil, "\(name)")
+            #expect(model.error != nil, "\(name)")
+            if name == "partial" { #expect(model.settings.provider == .anthropic && model.settings.cloudTwoStep == false) }
+        }
+    }
+
+    @Test func savingWithoutKeyKeepsStoredKeyAndWritesSettingsFirst() throws {
+        let r = try rig(); defer { try? FileManager.default.removeItem(at: r.paths.root) }
+        KeychainStore.items = ["anthropic": "sk-old"]; defer { KeychainStore.items = [:]; KeychainStore.failReads = false }
+        var s = AppSettings(); s.provider = .anthropic
+        try r.model.saveSettings(s, key: nil)
+        #expect(KeychainStore.items["anthropic"] == "sk-old")
+        // A failing settings write must not touch the Keychain.
+        try FileManager.default.removeItem(at: r.paths.settings)
+        try FileManager.default.createDirectory(at: r.paths.settings, withIntermediateDirectories: true)
+        #expect(throws: (any Error).self) { try r.model.saveSettings(s, key: "sk-new") }
+        #expect(KeychainStore.items["anthropic"] == "sk-old")
+    }
+
+    @Test func connectionTestKeyIsTrimmed() throws {
+        let r = try rig(); defer { try? FileManager.default.removeItem(at: r.paths.root) }
+        var s = AppSettings(); s.provider = .anthropic; s.inputUSDPerMillion = 4; s.outputUSDPerMillion = 20
+        let metered = try #require(try r.model.provider(using: s, keyOverride: "  sk-test\n") as? MeteredProvider)
+        let key = Mirror(reflecting: metered.base).children.first { $0.label == "apiKey" }?.value as? String
+        #expect(key == "sk-test")
+    }
+
+    @Test func providerFailuresAreRetryableAndKeepSkip() async throws {
+        let r = try rig(narrator: ThrowingNarrator(error: ProviderError.http(status: 503, body: "")))
+        defer { try? FileManager.default.removeItem(at: r.paths.root) }
+        let skip = TimeAdvance(unit: .months, amount: 2)
+        r.model.composer = "I let two months pass."; r.model.send(skipTime: skip)
+        await r.model.turnTask?.value
+        #expect(r.model.canRetry && r.model.failedTurn?.skipTime == skip)
+        // Pressing Send on the refilled composer keeps the skip.
+        r.model.send()
+        await r.model.turnTask?.value
+        #expect(r.model.failedTurn?.skipTime == skip)
+        #expect(await r.narrator.requestedTimes == [skip, skip])
+    }
+
+    @Test func urlErrorCancelledIsACancellationAndKeepsSkip() async throws {
+        let r = try rig(narrator: ThrowingNarrator(error: URLError(.cancelled)))
+        defer { try? FileManager.default.removeItem(at: r.paths.root) }
+        let skip = TimeAdvance(unit: .years, amount: 3)
+        r.model.composer = "I let 3 years pass."; r.model.send(skipTime: skip)
+        await r.model.turnTask?.value
+        #expect(r.model.error == nil && r.model.information?.contains("cancelled") == true)
+        #expect(r.model.failedTurn?.skipTime == skip && r.model.composer == "I let 3 years pass.")
+    }
+
+    @Test func updateWorldThrowsInsteadOfSilentNoOp() throws {
+        let model = AppModel(paths: try AppPaths(root: FileManager.default.temporaryDirectory.appendingPathComponent("lifegpt-fix-\(UUID().uuidString)")))
+        defer { try? FileManager.default.removeItem(at: model.paths!.root) }
+        #expect(throws: (any Error).self) { try model.updateWorld(text: "t", location: "l", economy: .sampleUS2005) }
+    }
+
+    @Test func suggestionKeepsTypedDraft() async throws {
+        let r = try rig(narrator: ThrowingNarrator(error: ProviderError.http(status: 500, body: "")))
+        defer { try? FileManager.default.removeItem(at: r.paths.root) }
+        r.model.composer = "my long draft"
+        r.model.send("Take the job")
+        #expect(r.model.composer == "my long draft")
+        await r.model.turnTask?.value
+        #expect(r.model.composer == "my long draft")
+    }
+
+    @Test func failedDeleteLeavesOpenLifeUntouched() throws {
+        let r = try rig()
+        let id = try #require(r.model.selection)
+        let file = r.paths.chats.appendingPathComponent("\(id.uuidString).lifechat")
+        func chattr(_ flag: String) { let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/chattr"); p.arguments = [flag, file.path]; try? p.run(); p.waitUntilExit() }
+        chattr("+i"); defer { chattr("-i"); try? FileManager.default.removeItem(at: r.paths.root) }
+        r.model.deleteLife(id)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect(r.model.selection == id && r.model.snapshot != nil && r.model.error != nil)
+    }
+
+    @Test func worldReviewUsesElapsedYears() throws {
+        let r = try rig(); defer { try? FileManager.default.removeItem(at: r.paths.root) }
+        var snap = try #require(r.model.snapshot)
+        let loc = snap.state["residence"] ?? "Anywhere"
+        snap.state["residence"] = loc
+        func check(_ brief: GameDate, _ now: GameDate) -> Bool {
+            snap.world = [PlaceTimeBrief(date: brief, location: loc, text: "x")]; snap.character.currentDate = now
+            return snap.worldNeedsReview
+        }
+        #expect(!check(GameDate(year: 2019, month: 12, day: 31), GameDate(year: 2020, month: 1, day: 5)))
+        #expect(!check(GameDate(year: 2000, month: 1, day: 1), GameDate(year: 2019, month: 12, day: 31)))
+        #expect(check(GameDate(year: 2000, month: 1, day: 1), GameDate(year: 2020, month: 1, day: 1)))
+    }
+
+    private func rig(narrator: ThrowingNarrator? = nil) throws -> (model: AppModel, narrator: ThrowingNarrator, paths: AppPaths) {
+        let paths = try AppPaths(root: FileManager.default.temporaryDirectory.appendingPathComponent("lifegpt-fix-\(UUID().uuidString)"))
+        let library = try ChatLibrary(directory: paths.chats)
+        _ = try library.createChat(character: NewCharacter(name: "Richard", birthplace: "Texas, USA", birthYear: 1985, appearance: "Tall",
+            startingAge: 18, background: nil, familyWealthTier: .wealthy), economy: .sampleUS2005)
+        let n = narrator ?? ThrowingNarrator(error: CancellationError())
+        return (AppModel(paths: paths, narratorFactory: { n }), n, paths)
+    }
+}
+
+private actor ThrowingNarrator: Narrator {
+    let error: any Error
+    private(set) var requestedTimes: [TimeAdvance?] = []
+    init(error: any Error) { self.error = error }
+    func narrate(_ request: NarratorRequest) async throws -> NarratorResult { requestedTimes.append(request.requestedTime); throw error }
+    func repair(_ request: NarratorRequest, rejections: [String]) async throws -> NarratorResult { try await narrate(request) }
+}

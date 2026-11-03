@@ -40,7 +40,7 @@ struct LifeSnapshot {
     var worldNeedsReview: Bool {
         guard let brief = world.last else { return true }
         let placeChanged = state["residence"].map { $0.caseInsensitiveCompare(brief.location) != .orderedSame } ?? false
-        return placeChanged || character.currentDate.year / 20 != brief.date.year / 20
+        return placeChanged || character.currentDate >= brief.date.adding(months: 240)
     }
     var accessibleAccounts: [BankAccount] { accounts.filter(\.isAccessible) }
     var currentResidence: JurisdictionRef? { geography.residence(on: character.currentDate) }

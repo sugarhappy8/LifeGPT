@@ -34,7 +34,7 @@ After an unsuccessful repair, `TurnError.validationFailed(reasons:)` stops the e
 
 An omitted or null `crime_attempt`, or an object with a whitespace-only reason, means no crime. The engine checks this before age or cooldown. Nonempty reasons are limited to 500 characters, with separate rejection messages for length, age, and cooldown violations.
 
-The app retains failed action text, selected skip duration, resolved word target, original length-picker choice, life ID, and save revision in temporary memory. Retry uses those inputs with the currently configured narrator. Editing the text, changing lives, dismissing the notice, or successful completion clears the retry. Refresh and retry preflight check the revision; a changed save cannot silently replay the stale action. Validation details appear outside the transcript. A post-commit view-refresh error never offers a retry of the already-saved action.
+The app retains failed action text, selected skip duration, resolved word target, original length-picker choice, life ID, and save revision in temporary memory. Retry uses those inputs with the currently configured narrator. Any non-cancellation failure (including network and HTTP errors) and a cancelled reply keep the attempt for retry while the save revision is unchanged; pressing Send on the refilled text reuses the retained skip duration. Editing the text, changing lives, dismissing the notice, or successful completion clears the retry. Refresh and retry preflight check the revision; a changed save cannot silently replay the stale action. Validation details appear outside the transcript. A post-commit view-refresh error never offers a retry of the already-saved action.
 
 ## Persistence
 

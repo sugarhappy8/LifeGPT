@@ -6,6 +6,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft = AppSettings()
     @State private var key = ""
+    @State private var keyEdited = false
+    @State private var keyLoaded = false
     @State private var message: String?
     @State private var failed = false
     @State private var testing = false
@@ -25,7 +27,7 @@ struct SettingsView: View {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(testing)
                 Button("Save Settings") {
-                    do { try model.saveSettings(draft, key: draft.usesCloud ? key : nil); dismiss() }
+                    do { try model.saveSettings(draft, key: draft.usesCloud && keyEdited && (keyLoaded || !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) ? key : nil); dismiss() }
                     catch { failed = true; message = error.localizedDescription }
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(model.busy || testing)
             }.padding(18)
@@ -44,11 +46,11 @@ struct SettingsView: View {
                     Text("Explore the interface with a small collection of built-in scenes. For open-ended storytelling, connect a cloud provider or a model running on your computer.").font(.callout).foregroundStyle(.secondary)
                 case .anthropic:
                     TextField("Model ID", text: $draft.anthropicModel)
-                    SecureField("API key", text: $key).privacySensitive()
+                    SecureField("API key", text: keyBinding).privacySensitive()
                     Toggle("Use two-step narration", isOn: $draft.cloudTwoStep)
                 case .gemini:
                     TextField("Model ID", text: $draft.geminiModel)
-                    SecureField("API key", text: $key).privacySensitive()
+                    SecureField("API key", text: keyBinding).privacySensitive()
                     Toggle("Use two-step narration", isOn: $draft.cloudTwoStep)
                 case .local:
                     TextField("Server URL", text: $draft.localServer)
@@ -119,9 +121,11 @@ struct SettingsView: View {
             }
         }.formStyle(.grouped)
     }
+    private var keyBinding: Binding<String> { Binding(get: { key }, set: { key = $0; keyEdited = true }) }
     private func loadKey() {
-        do { key = draft.usesCloud ? try KeychainStore.read(draft.provider.rawValue) : "" }
-        catch { key = ""; failed = true; message = error.localizedDescription }
+        keyEdited = false
+        do { key = draft.usesCloud ? try KeychainStore.read(draft.provider.rawValue) : ""; keyLoaded = true }
+        catch { key = ""; keyLoaded = false; failed = true; message = error.localizedDescription }
     }
     private func test() {
         testing = true; message = nil
