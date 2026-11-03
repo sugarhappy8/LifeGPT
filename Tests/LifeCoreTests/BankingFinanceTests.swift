@@ -115,6 +115,61 @@ import Testing
         #expect(try store.positions().isEmpty)
     }
 
+    @Test func sameTurnRaiseOrRehireCannotRaiseTheCreditLimit() async throws {
+        for rehire in [false, true] {
+            let store = try TestChat.chat(try TestChat.library()).store
+            try BankingEngine.manage(store: store, openings: [], changes: [
+                IncomeStreamChange(action: .start, name: "Shop", kind: .wage, tier: "entry", monthlyMinor: 200_000)
+            ], transfers: [], expectedRevision: store.revision())
+            if rehire {
+                try BankingEngine.manage(store: store, openings: [], changes: [
+                    IncomeStreamChange(action: .end, name: "Shop", kind: nil, tier: nil, monthlyMinor: nil)
+                ], transfers: [], expectedRevision: store.revision())
+            }
+            var proposed = output("You get a raise and ask for a loan.", streams: [
+                IncomeStreamChange(action: rehire ? .start : .change, name: "Shop", kind: .wage, tier: "professional", monthlyMinor: 900_000)])
+            proposed.resolution.financialActions = [.init(action: .borrow, id: "loan", name: "Loan", amountMinor: 2_700_000)]
+            let narrator = ScriptedNarrator(narrate: [.output(proposed)], repair: [.output(proposed)])
+            let processor = TurnProcessor(store: store, narrator: narrator, fate: FixedFate([50]))
+            await #expect(throws: TurnError.self) { _ = try await processor.play("Raise, then borrow.") }
+            #expect(try store.positions().isEmpty)
+        }
+    }
+
+    @Test func reusedArrearsRowFollowsThePersonalAccount() throws {
+        let row = FinancialPosition(id: "living-arrears", name: "Unpaid living costs", kind: .arrears, principalMinor: 0,
+                                    openedOn: date, accountId: "personal")
+        var plan = FinanceEngine.Plan(positions: [row], balance: 0, accountBalances: ["chk": 0], personalAccountId: "chk")
+        plan = try FinanceEngine.record([FinanceEngine.entry(.livingCost, -500, "Rent", date, accountId: "chk")], to: plan)
+        let arrears = try #require(plan.positions.first { $0.id == "living-arrears" })
+        #expect(arrears.principalMinor == 500 && arrears.accountId == "chk")
+    }
+
+    @Test func repaidLoanRowsArePrunedSoTheStoreBoundHolds() throws {
+        let wage = IncomeStream(name: "Shop", kind: .wage, tier: "entry", monthlyMinor: 1_000_000, startedOn: date.adding(months: -1))
+        var plan = FinanceEngine.Plan(positions: [], balance: 0)
+        for n in 0..<250 {
+            plan = try FinanceEngine.actions([.init(action: .borrow, id: "l\(n)", name: "Loan \(n)", amountMinor: 1_000)],
+                                             date: date, age: 30, economy: economy, streams: [wage], plan: plan)
+            plan = try FinanceEngine.actions([.init(action: .repay, id: "l\(n)", name: "Loan \(n)", amountMinor: 1_000)],
+                                             date: date, age: 30, economy: economy, streams: [wage], plan: plan)
+        }
+        #expect(plan.rejections.isEmpty && plan.positions.count <= 50)
+    }
+
+    @Test func streamEndMustNotOutlastTheAccountClosure() throws {
+        let store = try TestChat.chat(try TestChat.library()).store
+        try BankingEngine.manage(store: store, openings: [.init(id: "side", name: "Side", kind: .personal)], changes: [
+            IncomeStreamChange(action: .start, name: "Gig", kind: .wage, tier: "entry", monthlyMinor: 200_000, accountId: "side")
+        ], transfers: [], expectedRevision: store.revision())
+        let close = [AccountLifecycleChange(action: .close, accountId: "side", balanceDestinationAccountId: "personal", effectiveFrom: "2020-04-10")]
+        func end(_ on: String?) -> [IncomeStreamChange] { [IncomeStreamChange(action: .end, name: "Gig", kind: nil, tier: nil, monthlyMinor: nil, effectiveFrom: on)] }
+        #expect(throws: ValidationError.self) { try store.validateAccountClosures(close, incomeChanges: end(nil)) }
+        #expect(throws: ValidationError.self) { try store.validateAccountClosures(close, incomeChanges: end("2020-07-01")) }
+        try store.validateAccountClosures(close, incomeChanges: end("2020-04-10"))
+        try store.validateAccountClosures([AccountLifecycleChange(action: .close, accountId: "side", balanceDestinationAccountId: "personal")], incomeChanges: end(nil))
+    }
+
     @Test func closedPositionsFreeTheirIDsAndSlots() throws {
         var plan = FinanceEngine.Plan(positions: [], balance: 1_000_000)
         for n in 0..<110 {

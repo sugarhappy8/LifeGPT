@@ -4,7 +4,12 @@ import Security
 /// Credentials are never written to preferences, save files, logs or exported transcripts.
 enum KeychainStore {
     private static let service = "app.lifegpt.provider-credentials"
+    /// Test seam: while `items` is non-empty it stands in for the Keychain; `failReads` makes reads throw. Never set in the app.
+    nonisolated(unsafe) static var items: [String: String] = [:]
+    nonisolated(unsafe) static var failReads = false
     static func read(_ account: String) throws -> String {
+        if failReads { throw KeyError(status: errSecInteractionNotAllowed) }
+        if !items.isEmpty { return items[account] ?? "" }
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service, kSecAttrAccount as String: account,
             kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
@@ -15,6 +20,7 @@ enum KeychainStore {
         return String(decoding: data, as: UTF8.self)
     }
     static func save(_ secret: String, account: String) throws {
+        if !items.isEmpty { items[account] = secret.isEmpty ? nil : secret; return }
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service, kSecAttrAccount as String: account]
         if secret.isEmpty {

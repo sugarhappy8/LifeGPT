@@ -101,13 +101,12 @@ public struct LLMNarrator: Narrator {
         }
     }
     /// The JSON object in a model reply: the trimmed text itself, else the first balanced top-level `{...}`
-    /// (string and escape aware) that parses, after dropping `<think>` blocks and code fences.
+    /// (string and escape aware) that parses, after dropping `<think>` blocks (fences and prose are skipped by the scan).
     static func jsonObject(in text: String) -> String {
         func isObject(_ s: String) -> Bool { (try? JSONSerialization.jsonObject(with: Data(s.utf8))) is [String: Any] }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if isObject(trimmed) { return trimmed }
         let cleaned = trimmed.replacingOccurrences(of: #"(?s)<think>.*?</think>"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"```[A-Za-z]*"#, with: "", options: .regularExpression)
         let chars = Array(cleaned)
         var i = 0
         while i < chars.count {

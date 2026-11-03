@@ -328,8 +328,14 @@ public actor TurnProcessor {
             age: ageAtEnd, economy: truth.economy, balance: finances.balance, fate: fate, playStyle: truth.playStyle,
             personalAccountId: finances.personalAccountId)
         finances = try FinanceEngine.record(pathPlan.ledger, to: finances)
+        // Credit qualifies only on wages that were active before this turn and were not started, changed or ended in it,
+        // at their recorded pre-turn rate.
+        let touchedNames = Set(resolution.incomeStreams.map { $0.name.lowercased() })
+        let creditStreams = truth.incomeStreams.filter {
+            $0.kind == .wage && TimeEngine.isActive($0, on: start) && !touchedNames.contains($0.name.lowercased())
+        }
         finances = try FinanceEngine.actions(resolution.financialActions ?? [], date: evaluation.newDate,
-            age: ageAtEnd, economy: truth.economy, streams: income.streams.filter { s in truth.incomeStreams.contains { $0.kind == .wage && $0.name.caseInsensitiveCompare(s.name) == .orderedSame } },
+            age: ageAtEnd, economy: truth.economy, streams: creditStreams,
             plan: finances, household: truth.household)
         evaluation.payroll = finances.ledger; evaluation.positions = finances.positions; evaluation.paths = pathPlan.paths
         evaluation.rejections += pathPlan.rejections + finances.rejections

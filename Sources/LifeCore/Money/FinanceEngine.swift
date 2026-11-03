@@ -133,7 +133,7 @@ public enum FinanceEngine {
         }
         if actions.count > 12 { plan.rejections.append("At most twelve financial actions may happen in one turn.") }
         // Closed rows only keep their ID reusable; retain the 50 most recent so the store's 200-row bound can never be reached.
-        let deadIndexes = plan.positions.indices.filter { plan.positions[$0].principalMinor == 0 && [.asset, .investment].contains(plan.positions[$0].kind) }
+        let deadIndexes = plan.positions.indices.filter { plan.positions[$0].principalMinor == 0 && [.asset, .investment, .loan, .arrears].contains(plan.positions[$0].kind) }
         if deadIndexes.count > 50 { let drop = Set(deadIndexes.dropLast(50)); plan.positions = plan.positions.enumerated().filter { !drop.contains($0.offset) }.map(\.element) }
         return plan
     }
@@ -149,6 +149,7 @@ public enum FinanceEngine {
             if missing > 0 {
                 if let index = plan.positions.firstIndex(where: { $0.id == "fine-arrears" }) {
                     guard plan.positions[index].kind == .arrears else { throw ValidationError.invalid("The reserved fine-arrears position has an invalid type.") }
+                    if plan.positions[index].principalMinor == 0 { plan.positions[index].accountId = plan.personalAccountId }
                     plan.positions[index].principalMinor = try CheckedMoney.add(plan.positions[index].principalMinor, missing)
                 } else {
                     plan.positions.append(FinancialPosition(id: "fine-arrears", name: "Unpaid fines", kind: .arrears, principalMinor: missing, openedOn: date, accountId: plan.personalAccountId))
@@ -171,6 +172,7 @@ public enum FinanceEngine {
             let shortage = -next
             if let index = plan.positions.firstIndex(where: { $0.id == "living-arrears" }) {
                 guard plan.positions[index].kind == .arrears else { throw ValidationError.invalid("The reserved living-arrears position has an invalid type.") }
+                if plan.positions[index].principalMinor == 0 { plan.positions[index].accountId = plan.personalAccountId }
                 plan.positions[index].principalMinor = try CheckedMoney.add(plan.positions[index].principalMinor, shortage)
             } else {
                 plan.positions.append(FinancialPosition(id: "living-arrears", name: "Unpaid living costs", kind: .arrears,

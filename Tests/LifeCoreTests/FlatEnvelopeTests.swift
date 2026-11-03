@@ -112,5 +112,7 @@ import Testing
             #expect(LLMNarrator.jsonObject(in: text) == object)
         }
         #expect(LLMNarrator.jsonObject(in: "no json here") == "no json here")
+        let fenced = #"{"a":"code ```swift\nx\n``` end"}"#
+        #expect(LLMNarrator.jsonObject(in: "```json\n" + fenced + "\n```") == fenced)
     }
 }
