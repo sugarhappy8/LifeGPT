@@ -185,9 +185,14 @@ extension LifeStore {
     static func copyForImport(from source: URL, to destination: URL) throws {
         guard FileManager.default.fileExists(atPath: source.path) else { throw StoreError.notAStore }
         guard !FileManager.default.fileExists(atPath: destination.path) else { throw StoreError.alreadyExists }
+        guard (try? hasSQLiteHeader(source)) == true else { throw StoreError.notAStore }
         var configuration = Configuration(); configuration.readonly = true
-        let original = try DatabaseQueue(path: source.path, configuration: configuration)
-        let version = try original.read { try Int.fetchOne($0, sql: "PRAGMA user_version") ?? 0 }
+        let original: DatabaseQueue
+        let version: Int
+        do {
+            original = try DatabaseQueue(path: source.path, configuration: configuration)
+            version = try original.read { try Int.fetchOne($0, sql: "PRAGMA user_version") ?? 0 }
+        } catch is DatabaseError { throw StoreError.notAStore }
         guard version > 0 else { throw StoreError.notAStore }
         guard version <= Schema.version else { throw StoreError.unsupportedSchema(found: version) }
         let copy = try DatabaseQueue(path: destination.path)

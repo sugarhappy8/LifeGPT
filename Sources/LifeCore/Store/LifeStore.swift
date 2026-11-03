@@ -19,9 +19,6 @@ public final class LifeStore: Sendable {
         try character.validate()
         try economy.validate()
         guard !FileManager.default.fileExists(atPath: url.path) else { throw StoreError.alreadyExists }
-        let queue = try DatabaseQueue(path: url.path)
-        try Schema.migrate(queue)
-
         let c = Character(from: character, id: id)
         if let birth = character.birthJurisdiction { try CountryCatalog.shared.validate(birth, on: c.birthDate) }
         if let start = character.startingJurisdiction { try CountryCatalog.shared.validate(start, on: c.currentDate) }
@@ -29,7 +26,11 @@ public final class LifeStore: Sendable {
         let economyJSON = String(decoding: try JSONEncoder().encode(economy), as: UTF8.self)
         let opening = StartingMoney.balanceMinor(forAge: character.startingAge, economy: economy)
 
-        try queue.write { db in
+        let queue: DatabaseQueue
+        do {
+            queue = try DatabaseQueue(path: url.path)
+            try Schema.migrate(queue)
+            try queue.write { db in
             if character.birthJurisdiction != nil || character.startingJurisdiction != nil {
                 let geography = LifeGeography(birth: character.birthJurisdiction,
                     residences: character.startingJurisdiction.map { [ResidenceChange(jurisdiction: $0, effectiveFrom: c.currentDate)] } ?? [])
@@ -59,6 +60,10 @@ public final class LifeStore: Sendable {
                     """,
                 arguments: [c.currentDate.iso, SourceType.opening.rawValue, opening, "Starting savings",
                             opening, Origin.engine.rawValue])
+            }
+        } catch {
+            for suffix in ["", "-wal", "-shm", "-journal"] { try? FileManager.default.removeItem(atPath: url.path + suffix) }
+            throw error
         }
         return LifeStore(url: url, dbQueue: queue)
     }
@@ -75,13 +80,17 @@ public final class LifeStore: Sendable {
         }
         if version == 0 { throw StoreError.notAStore }
         if version > Schema.version { throw StoreError.unsupportedSchema(found: version) }
+        let looksLikeStore = try queue.read { db in
+            try ["session", "character", "economy_card", "ledger"].allSatisfy { try db.tableExists($0) }
+        }
+        guard looksLikeStore else { throw StoreError.notAStore }
         try Schema.migrate(queue)
         let valid = try queue.read { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM character") == 1 }
         guard valid else { throw StoreError.notAStore }
         return LifeStore(url: url, dbQueue: queue)
     }
 
-    private static func hasSQLiteHeader(_ url: URL) throws -> Bool {
+    static func hasSQLiteHeader(_ url: URL) throws -> Bool {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let header = try handle.read(upToCount: 16) ?? Data()

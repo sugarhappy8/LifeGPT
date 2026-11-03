@@ -188,6 +188,53 @@ import Testing
         #expect(throws: StoreError.notAStore) { _ = try LifeStore.open(at: url) }
     }
 
+    @Test func openingForeignDatabaseDoesNotModifyIt() throws {
+        let lib = try TestChat.library()
+        let url = lib.directory.appendingPathComponent("foreign.lifechat")
+        do {
+            let raw = try DatabaseQueue(path: url.path)
+            try raw.write { db in
+                try db.execute(sql: "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)")
+                try db.execute(sql: "PRAGMA user_version = 2")
+            }
+        }
+        #expect(throws: StoreError.notAStore) { _ = try LifeStore.open(at: url) }
+        let raw = try DatabaseQueue(path: url.path)
+        let tables = try raw.read { try String.fetchAll($0, sql: "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name") }
+        #expect(tables == ["notes"])
+        #expect(try raw.read { try Int.fetchOne($0, sql: "PRAGMA user_version") } == 2)
+    }
+
+    @Test func failedCreateLeavesNoFileBehind() throws {
+        let lib = try TestChat.library()
+        var bad = TestChat.newCharacter()
+        bad.startingJurisdiction = JurisdictionRef(countryID: "ZZ", subdivisionID: nil, locality: nil)
+        #expect(throws: (any Error).self) { _ = try lib.createChat(character: bad, economy: .sampleUS2005) }
+        let files = try FileManager.default.contentsOfDirectory(atPath: lib.directory.path)
+        #expect(files.filter { $0.contains(".lifechat") }.isEmpty)
+        #expect(try lib.unreadableFiles().isEmpty)
+    }
+
+    @Test func corruptOrPartialSettingsKeepKnownFields() throws {
+        let lib = try TestChat.library()
+        let (_, store) = try TestChat.chat(lib)
+        let raw = try DatabaseQueue(path: store.url.path)
+        try raw.write { try $0.execute(sql: "UPDATE session SET settings_json = ?", arguments: [#"{"voiceBible":"keep me","playStyle":"from-the-future","difficulty":80}"#]) }
+        let s = try store.sessionSettings()
+        #expect(s.voiceBible == "keep me"); #expect(s.difficulty == 80); #expect(s.playStyle == .simulation)
+        try raw.write { try $0.execute(sql: "UPDATE session SET settings_json = '{bad'") }
+        #expect(try store.sessionSettings() == SessionSettings())
+    }
+
+    @Test func importingNonSQLiteFileThrowsNotAStoreAndLeavesNothing() throws {
+        let lib = try TestChat.library()
+        let src = lib.directory.appendingPathComponent("note.lifechat")
+        try Data("hello, not a database, just text padding padding".utf8).write(to: src)
+        #expect(throws: StoreError.notAStore) { _ = try lib.importChat(from: src) }
+        let files = try FileManager.default.contentsOfDirectory(atPath: lib.directory.path)
+        #expect(files == ["note.lifechat"])
+    }
+
     @Test func openingFutureSchemaThrowsUnsupportedSchema() throws {
         let lib = try TestChat.library()
         let (id, _) = try TestChat.chat(lib)
