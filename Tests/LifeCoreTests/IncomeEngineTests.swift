@@ -21,6 +21,35 @@ import Testing
                           economy: economy, playStyle: playStyle, accounts: accounts, paths: paths)
     }
 
+    @Test func mixedCaseAccountIDsRouteToTheCanonicalAccount() {
+        let mixed = accounts + [BankAccount(id: "Acme-Ops", name: "Acme", kind: .business)]
+        for supplied in ["Acme-Ops", " acme-ops "] {
+            let result = IncomeEngine.plan(changes: [business("Rent", account: supplied)], existing: [], start: start, end: end,
+                economy: economy, playStyle: .simulation, accounts: mixed, paths: [])
+            #expect(result.rejections.isEmpty)
+            #expect(result.streams.first?.accountId == "Acme-Ops")
+        }
+    }
+
+    @Test func simulationCapsAllowancesButNotRentalOrBusiness() {
+        let cap = economy.medianMonthlyIncomeMinor * 10
+        func allowance(_ amount: Int64) -> IncomeStreamChange {
+            IncomeStreamChange(action: .start, name: "Grandma", kind: .allowance, tier: nil, monthlyMinor: amount, reason: "Generous relative")
+        }
+        #expect(plan([allowance(1_000_000_000_000)]).rejections.count == 1)
+        #expect(plan([allowance(cap)]).rejections.isEmpty)
+        #expect(plan([allowance(1_000_000_000_000)], playStyle: .sandbox).rejections.isEmpty)
+        #expect(plan([business(monthly: 100_000_000)]).rejections.isEmpty)
+    }
+
+    @Test func simulationRejectsJobsForYoungChildrenInThePlanner() {
+        let birth = GameDate(year: 2014, month: 1, day: 1)
+        let wage = IncomeStreamChange(action: .start, name: "Shop", kind: .wage, tier: "entry", monthlyMinor: 200_000)
+        let result = IncomeEngine.plan(changes: [wage], existing: [], start: start, end: end, economy: economy,
+            playStyle: .simulation, accounts: accounts, paths: [], birthDate: birth)
+        #expect(result.rejections.count == 1 && result.streams.isEmpty)
+    }
+
     @Test func fiftyThousandMonthlyBusinessIsAcceptedAndRouted() {
         let result = plan([business(account: " WEBSITE ")])
         #expect(result.rejections.isEmpty)
@@ -87,7 +116,7 @@ import Testing
 
     @Test func highBusinessRentalAndAllowanceRequireSourceRationale() {
         for kind in [IncomeStream.Kind.business, .rental, .allowance] {
-            var change = business(reason: " \n "); change.kind = kind
+            var change = business(monthly: kind == .allowance ? economy.medianMonthlyIncomeMinor * 2 : 5_000_000, reason: " \n "); change.kind = kind
             #expect(plan([change]).changes.isEmpty)
             change.reason = "Recorded monthly payments from the established source."
             #expect(plan([change]).rejections.isEmpty)

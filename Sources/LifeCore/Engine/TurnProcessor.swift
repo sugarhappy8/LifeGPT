@@ -234,16 +234,10 @@ public actor TurnProcessor {
             .map { OpportunityPath(id: $0.id, title: $0.title, stage: $0.stage, startedOn: evaluation.newDate) }
         let income = IncomeEngine.plan(changes: resolution.incomeStreams, existing: truth.incomeStreams,
             start: start, end: evaluation.newDate, economy: truth.economy, playStyle: truth.playStyle,
-            accounts: prepared.accounts, paths: oldPaths + newPaths, rules: rules, personalAccountId: prepared.state.defaultPersonalAccountId)
+            accounts: prepared.accounts, paths: oldPaths + newPaths, rules: rules, personalAccountId: prepared.state.defaultPersonalAccountId,
+            birthDate: truth.character.birthDate)
         evaluation.streams = income.changes
         evaluation.rejections += income.rejections
-        for change in income.changes where change.action != .end {
-            let date = change.effectiveFrom.flatMap(GameDate.init(iso:)) ?? evaluation.newDate
-            if truth.playStyle == .simulation, date.ageYears(bornOn: truth.character.birthDate) < 13,
-               change.kind == .wage || change.kind == .selfEmployment {
-                evaluation.rejections.append("income_streams: young children cannot hold jobs")
-            }
-        }
         // Creating a managed business is an explicit accounting conversion, never
         // an implicit second deposit over an existing net-income stream.
         let managed = Set(prepared.state.businesses.map(\.accountId))
@@ -328,7 +322,8 @@ public actor TurnProcessor {
             personalAccountId: finances.personalAccountId)
         finances = try FinanceEngine.record(pathPlan.ledger, to: finances)
         finances = try FinanceEngine.actions(resolution.financialActions ?? [], date: evaluation.newDate,
-            age: ageAtEnd, economy: truth.economy, streams: income.streams, plan: finances, household: truth.household)
+            age: ageAtEnd, economy: truth.economy, streams: income.streams.filter { s in truth.incomeStreams.contains { $0.kind == .wage && $0.name.caseInsensitiveCompare(s.name) == .orderedSame } },
+            plan: finances, household: truth.household)
         evaluation.payroll = finances.ledger; evaluation.positions = finances.positions; evaluation.paths = pathPlan.paths
         evaluation.rejections += pathPlan.rejections + finances.rejections
         return evaluation

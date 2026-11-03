@@ -75,7 +75,11 @@ public enum FinanceEngine {
                   amount > 0, amount <= 1_000_000_000_000, plan.accountBalances[accountId] != nil else {
                 reject("needs a name, stable ID, known account and positive amount within 1 trillion minor units"); continue
             }
-            let index = plan.positions.firstIndex { $0.id == id }
+            var index = plan.positions.firstIndex { $0.id == id }
+            // A fully closed asset or investment frees its ID and its slot in the portfolio.
+            let closed = index.map { plan.positions[$0].principalMinor == 0 && [.asset, .investment].contains(plan.positions[$0].kind) } ?? false
+            let reopening = closed && [.buyAsset, .invest].contains(action.action)
+            if reopening { index = nil }
             if let index, (plan.positions[index].accountId ?? plan.personalAccountId) != accountId {
                 reject("this position belongs to a different account"); continue
             }
@@ -86,12 +90,13 @@ public enum FinanceEngine {
             switch action.action {
             case .buyAsset, .invest:
                 guard age >= 18 else { reject("a guardian controls major purchases and investments before 18"); continue }
-                guard index == nil, plan.positions.count < 100, cash >= amount else {
+                guard index == nil, plan.positions.filter({ $0.principalMinor > 0 }).count < 100, cash >= amount else {
                     reject("ID already exists, portfolio is full, or savings cannot cover this purchase"); continue
                 }
                 let kind: FinancialPosition.Kind = action.action == .invest ? .investment : .asset
-                plan.positions.append(FinancialPosition(id: id, name: name, kind: kind, principalMinor: amount,
-                    annualRateBPS: kind == .investment ? (date.year >= 1900 ? 300 : 100) : 0, openedOn: date, accountId: accountId))
+                let position = FinancialPosition(id: id, name: name, kind: kind, principalMinor: amount,
+                    annualRateBPS: kind == .investment ? (date.year >= 1900 ? 300 : 100) : 0, openedOn: date, accountId: accountId)
+                if reopening, let dead = plan.positions.firstIndex(where: { $0.id == id }) { plan.positions[dead] = position } else { plan.positions.append(position) }
                 try post(entry(.expense, -amount, "\(kind == .investment ? "Deposit into" : "Purchase of") \(name)", date, accountId: accountId), to: &plan)
             case .sellAsset, .withdraw:
                 guard let index else { reject("you do not own this position"); continue }
@@ -105,7 +110,7 @@ public enum FinanceEngine {
                 plan.positions[index].principalMinor -= amount
                 if proceeds > 0 { try post(entry(.assetSale, proceeds, "\(p.kind == .asset ? "Sale" : "Withdrawal"): \(p.name)", date, accountId: accountId), to: &plan) }
             case .borrow:
-                let monthly = try streams.filter { TimeEngine.isActive($0, on: date) && $0.accountId == accountId }.reduce(Int64(0)) { try CheckedMoney.add($0, $1.monthlyMinor) }
+                let monthly = try streams.filter { $0.kind == .wage && TimeEngine.isActive($0, on: date) && $0.accountId == accountId }.reduce(Int64(0)) { try CheckedMoney.add($0, $1.monthlyMinor) }
                 let spare = max(0, monthly - (accountId == plan.personalAccountId ? household.monthlyCost(economy: economy) : 0))
                 guard age >= 18, !borrowedThisTurn, index == nil,
                       !plan.positions.contains(where: { $0.isDebt && $0.principalMinor > 0 && plan.accountBalances[$0.accountId ?? plan.personalAccountId] != nil }),

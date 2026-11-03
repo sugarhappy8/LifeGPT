@@ -16,7 +16,8 @@ public enum IncomeEngine {
     public static func plan(changes: [IncomeStreamChange], existing: [IncomeStream],
                             start: GameDate, end: GameDate, economy: EconomyCard,
                             playStyle: PlayStyle, accounts: [BankAccount],
-                            paths: [OpportunityPath], rules: MoneyRules = .v1, personalAccountId: String = "personal") -> Plan {
+                            paths: [OpportunityPath], rules: MoneyRules = .v1, personalAccountId: String = "personal",
+                            birthDate: GameDate? = nil) -> Plan {
         var plan = Plan(streams: existing)
         guard end >= start else {
             plan.rejections.append("income_streams: effective dates require a nonnegative turn duration")
@@ -25,7 +26,7 @@ public enum IncomeEngine {
         var seen = Set<String>()
         var dated: [(index: Int, date: GameDate, change: IncomeStreamChange)] = []
         for (index, original) in changes.enumerated() {
-            let change = normalized(original)
+            let change = canonical(normalized(original), accounts: accounts)
             func reject(_ reason: String) { plan.rejections.append("income_streams \(change.name): \(reason)") }
             guard index < maximumChangesPerTurn else {
                 reject("at most \(maximumChangesPerTurn) income changes may happen in one turn"); continue
@@ -70,6 +71,10 @@ public enum IncomeEngine {
             if let problem = problem(change, current: current, activeCount: active.count,
                                      economy: economy, rules: rules, playStyle: playStyle) {
                 reject(problem); continue
+            }
+            if playStyle == .simulation, change.action != .end, let birthDate, date.ageYears(bornOn: birthDate) < 13,
+               (change.kind ?? current?.kind ?? .wage) == .wage || (change.kind ?? current?.kind) == .selfEmployment {
+                reject("young children cannot hold jobs"); continue
             }
             change.effectiveFrom = date.iso
             if let current { change.name = current.name }
@@ -172,7 +177,10 @@ public enum IncomeEngine {
         case .selfEmployment:
             let cap = rules.selfEmploymentMonthlyCap(economy: economy)
             if monthly > cap { return "over the self-employment cap of \(Money.format(cap, economy: economy)) per month; use business income for an established scalable business" }
-        case .business, .allowance, .rental:
+        case .allowance:
+            let cap = economy.medianMonthlyIncomeMinor * 10
+            if monthly > cap { return "over the allowance cap of \(Money.format(cap, economy: economy)) per month" }
+        case .business, .rental:
             break
         }
         return nil
@@ -193,13 +201,19 @@ public enum IncomeEngine {
         var change = original
         change.name = original.name.trimmingCharacters(in: .whitespacesAndNewlines)
         change.tier = original.tier?.trimmingCharacters(in: .whitespacesAndNewlines)
-        change.accountId = original.accountId.map(key)
+        change.accountId = original.accountId?.trimmingCharacters(in: .whitespacesAndNewlines)
         change.pathId = original.pathId.map(key)
         change.effectiveFrom = original.effectiveFrom?.trimmingCharacters(in: .whitespacesAndNewlines)
         change.reason = original.reason?.trimmingCharacters(in: .whitespacesAndNewlines)
         return change
     }
 
+    /// Account IDs keep their stored case; a case-variant resolves to the canonical stored ID.
+    private static func canonical(_ change: IncomeStreamChange, accounts: [BankAccount]) -> IncomeStreamChange {
+        var change = change
+        if let supplied = change.accountId, let match = accounts.first(where: { $0.id.caseInsensitiveCompare(supplied) == .orderedSame }) { change.accountId = match.id }
+        return change
+    }
     private static func isActive(_ stream: IncomeStream, on date: GameDate) -> Bool {
         stream.startedOn <= date && (stream.endedOn == nil || date < stream.endedOn!)
     }

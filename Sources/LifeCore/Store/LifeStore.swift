@@ -307,6 +307,7 @@ public final class LifeStore: Sendable {
             guard current == expectedRevision else {
                 throw ValidationError.invalid("This life changed during the edit. Please try again.")
             }
+            guard !(try Bool.fetchOne(db, sql: "SELECT ended FROM session") ?? false) else { throw ValidationError.invalid("This life has ended.") }
             let date = try Self.parseDate(String.fetchOne(db, sql: "SELECT game_date FROM character") ?? "")
             let business = try Self.simulationRecord(db, key: "business", default: BusinessSimulationState())
             let forbidden = Set(business.accountMetadata.filter { $0.status != .active || ($0.access != .owner && $0.access != .manager) }.map(\.id))

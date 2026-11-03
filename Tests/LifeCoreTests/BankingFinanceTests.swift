@@ -61,7 +61,7 @@ import Testing
     }
 
     @Test func recurringBusinessIncomeSupportsCreditOnlyInItsDestinationAccount() throws {
-        let stream = IncomeStream(name: "Website", kind: .business, tier: nil, monthlyMinor: 5_000_000,
+        let stream = IncomeStream(name: "Website", kind: .wage, tier: "entry", monthlyMinor: 5_000_000,
                                   startedOn: date, accountId: "business")
         let initial = FinanceEngine.Plan(positions: [], balance: 0, accountBalances: ["personal": 0, "business": 0])
         let businessLoan = FinancialAction(action: .borrow, id: "hosting", name: "Hosting expansion",
@@ -91,6 +91,85 @@ import Testing
                                               streams: [ended, future], plan: initial)
         #expect(result.positions.isEmpty && result.ledger.isEmpty)
         #expect(result.rejections.count == 1)
+    }
+
+    @Test func onlyPreExistingWageIncomeSupportsBorrowing() throws {
+        let initial = FinanceEngine.Plan(positions: [], balance: 100_000)
+        let borrow = FinancialAction(action: .borrow, id: "loan", name: "Loan", amountMinor: 100_000)
+        let allowance = IncomeStream(name: "Grandma", kind: .allowance, tier: nil, monthlyMinor: 200_000, startedOn: date.adding(months: -1))
+        let denied = try FinanceEngine.actions([borrow], date: date, age: 30, economy: economy, streams: [allowance], plan: initial)
+        #expect(denied.positions.isEmpty && denied.rejections.count == 1)
+        let wage = IncomeStream(name: "Shop", kind: .wage, tier: "entry", monthlyMinor: 200_000, startedOn: date.adding(months: -1))
+        let ok = try FinanceEngine.actions([borrow], date: date, age: 30, economy: economy, streams: [wage], plan: initial)
+        #expect(ok.positions.count == 1 && ok.rejections.isEmpty)
+    }
+
+    @Test func sameTurnWageStreamCannotQualifyALoan() async throws {
+        let store = try TestChat.chat(try TestChat.library()).store
+        var proposed = output("You take a job and ask for a loan.", streams: [
+            IncomeStreamChange(action: .start, name: "Shop", kind: .wage, tier: "entry", monthlyMinor: 200_000)])
+        proposed.resolution.financialActions = [.init(action: .borrow, id: "loan", name: "Loan", amountMinor: 100_000)]
+        let narrator = ScriptedNarrator(narrate: [.output(proposed)], repair: [.output(proposed)])
+        let processor = TurnProcessor(store: store, narrator: narrator, fate: FixedFate([50]))
+        await #expect(throws: TurnError.self) { _ = try await processor.play("Take a job and borrow.") }
+        #expect(try store.positions().isEmpty)
+    }
+
+    @Test func closedPositionsFreeTheirIDsAndSlots() throws {
+        var plan = FinanceEngine.Plan(positions: [], balance: 1_000_000)
+        for n in 0..<110 {
+            plan = try FinanceEngine.actions([.init(action: .buyAsset, id: "a\(n)", name: "Asset \(n)", amountMinor: 100),
+                                              .init(action: .sellAsset, id: "a\(n)", name: "Asset \(n)", amountMinor: 100)],
+                                             date: date, age: 30, economy: economy, streams: [], plan: plan)
+        }
+        #expect(plan.rejections.isEmpty)
+        let again = try FinanceEngine.actions([.init(action: .buyAsset, id: "a0", name: "Asset 0", amountMinor: 100)],
+                                              date: date, age: 30, economy: economy, streams: [], plan: plan)
+        #expect(again.rejections.isEmpty)
+        #expect(again.positions.filter { $0.id == "a0" }.count == 1 && again.positions.first { $0.id == "a0" }?.principalMinor == 100)
+    }
+
+    @Test func taxReservesAndBusinessAccountsDoNotCountTowardTheAccountCap() {
+        var existing = [BankAccount(id: "personal", name: "Personal", kind: .personal)]
+        for n in 0..<19 { existing.append(BankAccount(id: "reserve\(n)", name: "Reserve \(n)", kind: .taxReserve, businessId: "b\(n)")) }
+        let result = BankingEngine.open([.init(id: "rainy", name: "Rainy day", kind: .savings)], existing: existing)
+        #expect(result.rejections.isEmpty && result.openings.count == 1)
+        let twin = BankingEngine.open([.init(id: "personal", name: "Other", kind: .savings)], existing: existing)
+        #expect(twin.openings.isEmpty)
+    }
+
+    @Test func accountIDUniquenessIsCaseInsensitive() {
+        let existing = [BankAccount(id: "personal", name: "Personal", kind: .personal),
+                        BankAccount(id: "Acme-Ops", name: "Acme", kind: .business)]
+        let result = BankingEngine.open([.init(id: "acme-ops", name: "Twin", kind: .savings)], existing: existing)
+        #expect(result.openings.isEmpty && result.rejections.count == 1)
+    }
+
+    @Test func manageFinancesIsRefusedAfterTheLifeEnds() throws {
+        let store = try TestChat.chat(try TestChat.library()).store
+        try store.dbQueue.write { try $0.execute(sql: "UPDATE session SET ended = 1") }
+        let revision = try store.revision()
+        #expect(throws: ValidationError.self) {
+            try BankingEngine.manage(store: store, openings: [.init(id: "post", name: "Post", kind: .savings)], changes: [],
+                                     transfers: [], expectedRevision: revision)
+        }
+        #expect(try store.revision() == revision && store.accounts().count == 1)
+        #expect(throws: ValidationError.self) {
+            try store.applyFinancialChanges(accountOpenings: [.init(id: "post", name: "Post", kind: .savings)], streamChanges: [],
+                                            ledger: [], expectedRevision: revision)
+        }
+    }
+
+    @Test func manageFinancesRejectsJobsForYoungChildren() throws {
+        let library = try TestChat.library()
+        let store = try TestChat.chat(library, age: 6).store
+        let revision = try store.revision()
+        #expect(throws: ValidationError.self) {
+            try BankingEngine.manage(store: store, openings: [], changes: [
+                IncomeStreamChange(action: .start, name: "Shop", kind: .wage, tier: "entry", monthlyMinor: 200_000)
+            ], transfers: [], expectedRevision: revision)
+        }
+        #expect(try store.incomeStreams().isEmpty)
     }
 
     @Test func businessIncomeDoesNotSilentlyPayPersonalBillsAndDoesNotDuplicatePathProfit() throws {
@@ -163,7 +242,7 @@ import Testing
         #expect(try store.positions().first?.principalMinor == 10_000)
     }
 
-    @Test func turningEighteenAndStartingIncomeSupportsLoanInSameTurn() async throws {
+    @Test func turningEighteenAndStartingBusinessIncomeCannotSupportLoanInSameTurn() async throws {
         let store = try TestChat.chat(try TestChat.library(), age: 17).store
         var settings = SessionSettings(); settings.household = .familySupported
         try store.updateSettings(settings, swingDial: 1, replyLengthWords: 200)
@@ -174,13 +253,11 @@ import Testing
         proposed.resolution.accountOpenings = [.init(id: "business", name: "Business", kind: .business)]
         proposed.resolution.financialActions = [.init(action: .borrow, id: "loan", name: "Hosting credit",
                                                       amountMinor: 100_000, accountId: "business")]
-        let processor = TurnProcessor(store: store, narrator: ScriptedNarrator(narrate: [.output(proposed)]), fate: FixedFate([50]))
-        let result = try await processor.play("Work on the website for a year, then borrow against its established income when I turn eighteen.")
-        #expect(result.rejections.isEmpty)
-        #expect(try store.character().ageYears == 18)
-        #expect(try store.positions().first?.kind == .loan)
-        #expect(try store.positions().first?.accountId == "business")
-        #expect(try store.accounts().first { $0.id == "business" }?.balanceMinor == 600_000)
+        let narrator = ScriptedNarrator(narrate: [.output(proposed)], repair: [.output(proposed)])
+        let processor = TurnProcessor(store: store, narrator: narrator, fate: FixedFate([50]))
+        // Docs: loans need positive wage surplus from income that already existed before the turn.
+        await #expect(throws: TurnError.self) { _ = try await processor.play("Work on the website for a year, then borrow against its income when I turn eighteen.") }
+        #expect(try store.positions().isEmpty)
     }
 
     @Test func turnCannotBorrowAgainstIncomeItEndsAndFailedTurnIsAtomic() async throws {
