@@ -214,12 +214,13 @@ private actor RetryNarrator: Narrator {
         #expect(r.model.composer == "my long draft")
     }
 
-    @Test func failedDeleteLeavesOpenLifeUntouched() throws {
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/chattr"))) func failedDeleteLeavesOpenLifeUntouched() throws {
         let r = try rig()
         let id = try #require(r.model.selection)
         let file = r.paths.chats.appendingPathComponent("\(id.uuidString).lifechat")
-        func chattr(_ flag: String) { let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/chattr"); p.arguments = [flag, file.path]; try? p.run(); p.waitUntilExit() }
-        chattr("+i"); defer { chattr("-i"); try? FileManager.default.removeItem(at: r.paths.root) }
+        @discardableResult func chattr(_ flag: String) -> Bool { let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/chattr"); p.arguments = [flag, file.path]; guard (try? p.run()) != nil else { return false }; p.waitUntilExit(); return p.terminationStatus == 0 }
+        guard chattr("+i") else { try? FileManager.default.removeItem(at: r.paths.root); return }  // immutable flag unsupported here (needs root + capable fs)
+        defer { chattr("-i"); try? FileManager.default.removeItem(at: r.paths.root) }
         r.model.deleteLife(id)
         #expect(FileManager.default.fileExists(atPath: file.path))
         #expect(r.model.selection == id && r.model.snapshot != nil && r.model.error != nil)
