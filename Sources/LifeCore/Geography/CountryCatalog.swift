@@ -129,18 +129,32 @@ public struct CountryCatalog: Sendable {
             q.isEmpty || ([region.name, region.id] + region.aliases).contains { Self.normalized($0).contains(q) }
         }
     }
-    /// Only exact, unambiguous names/aliases are mapped. Ambiguous city-only text remains unresolved.
+    /// Only exact, unambiguous names/aliases are mapped (also across comma-joined windows such as "Korea, Republic of").
+    /// Candidates applying on the date win; a sole withdrawn match maps to its unambiguous modern successor; ties break on a subdivision named elsewhere in the text.
     public func resolveLegacy(_ text: String, on date: GameDate) -> JurisdictionRef? {
         let parts = text.split(whereSeparator: { ",;\n".contains($0) }).map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
         let normalized = parts.map(Self.normalized)
-        var matches = countries.filter { c in ([c.name, c.id] + c.aliases).map(Self.normalized).contains(where: normalized.contains) }
-        if matches.count > 1 { let applicable = matches.filter { $0.applies(on: date) }; if applicable.count == 1 { matches = applicable } }
+        // Normalized names -> the part indices a contiguous window of up to 3 parts covers.
+        var windows: [String: [Set<Int>]] = [:]
+        for i in normalized.indices { for n in 1...3 where i + n <= normalized.count {
+            windows[normalized[i..<(i + n)].joined(separator: ", "), default: []].append(Set(i..<(i + n)))
+        } }
+        func covered(_ keys: [String]) -> Set<Int> { keys.map(Self.normalized).reduce(into: Set<Int>()) { $0.formUnion((windows[$1] ?? []).reduce(into: Set<Int>()) { $0.formUnion($1) }) } }
+        func regions(of c: CountryPreset) -> [SubdivisionPreset] { subdivisions(countryID: c.id).filter { r in !covered([r.name, r.id] + r.aliases).isEmpty } }
+        var matches = countries.filter { c in !covered([c.name, c.id] + c.aliases).isEmpty }
+        let applicable = matches.filter { $0.applies(on: date) }
+        if !applicable.isEmpty { matches = applicable }
+        else if matches.count == 1, case let modern = matches[0].successorIDs.compactMap({ country(id: $0) }).filter({ $0.applies(on: date) }), modern.count == 1 { matches = modern }
+        if matches.count > 1 {  // A matched predecessor outranks its own successor (e.g. Burma / Myanmar in 1980).
+            let ids = Set(matches.map(\.id)); matches = matches.filter { m in !matches.contains { $0.id != m.id && $0.successorIDs.contains(m.id) && ids.contains($0.id) } }
+        }
+        if matches.count > 1 { let withRegion = matches.filter { !regions(of: $0).isEmpty }; if withRegion.count == 1 { matches = withRegion } }
         guard matches.count == 1, let c = matches.first else { return nil }
-        let regions = subdivisions(countryID: c.id).filter { r in ([r.name, r.id] + r.aliases).map(Self.normalized).contains(where: normalized.contains) }
-        guard regions.count <= 1 else { return nil }
-        let used = Set(([c.name, c.id] + c.aliases + regions.flatMap { [$0.name, $0.id] + $0.aliases }).map(Self.normalized))
-        let locality = parts.filter { !used.contains(Self.normalized($0)) }.joined(separator: ", ")
-        return JurisdictionRef(countryID: c.id, subdivisionID: regions.first?.id, locality: locality.isEmpty ? nil : locality)
+        let found = regions(of: c)
+        guard found.count <= 1 else { return nil }
+        let used = covered([c.name, c.id] + c.aliases + found.flatMap { [$0.name, $0.id] + $0.aliases })
+        let locality = parts.indices.filter { !used.contains($0) }.map { parts[$0] }.joined(separator: ", ")
+        return JurisdictionRef(countryID: c.id, subdivisionID: found.first?.id, locality: locality.isEmpty ? nil : locality)
     }
     public func economyAssumptions(for ref: JurisdictionRef, on date: GameDate) -> String {
         guard let country = country(id: ref.countryID) else { return "Unresolved nation; no country-specific prices are available." }

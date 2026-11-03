@@ -41,6 +41,24 @@ struct GeographyTests {
         #expect(catalog.resolveLegacy("France, Germany", on: date) == nil)
         #expect(catalog.resolveLegacy("Paris", on: date) == nil)
     }
+    @Test func legacyResolutionHandlesCommonNamesAndCommaNames() {
+        #expect(catalog.resolveLegacy("Chicago, United States", on: date)?.countryID == "US")
+        #expect(catalog.resolveLegacy("Amsterdam, Netherlands", on: date) == JurisdictionRef(countryID: "NL", locality: "Amsterdam"))
+        #expect(catalog.resolveLegacy("Macau", on: date)?.countryID == "MO")
+        #expect(catalog.resolveLegacy("Praia, Cape Verde", on: date)?.countryID == "CV")
+        #expect(catalog.resolveLegacy("Seoul, Korea, Republic of", on: date) == JurisdictionRef(countryID: "KR", locality: "Seoul"))
+    }
+    @Test func legacyResolutionPrefersApplicableAndDisambiguatesByRegion() {
+        #expect(catalog.resolveLegacy("Rangoon, Burma", on: date) == JurisdictionRef(countryID: "MM", locality: "Rangoon"))
+        #expect(catalog.resolveLegacy("Rangoon, Burma", on: GameDate(year: 1980, month: 1, day: 1))?.countryID == "BUMM")
+        #expect(catalog.resolveLegacy("Dili, East Timor", on: date)?.countryID == "TL")
+        #expect(catalog.resolveLegacy("Cotonou, Dahomey", on: date)?.countryID == "BJ")
+        #expect(catalog.resolveLegacy("USSR", on: date)?.countryID == "SUHH")  // several successors: stay on the explicit historical estimate
+        let ga = catalog.resolveLegacy("Atlanta, Georgia, USA", on: date)
+        #expect(ga == JurisdictionRef(countryID: "US", subdivisionID: "US-GA", locality: "Atlanta"))
+        #expect(catalog.resolveLegacy("Tbilisi, Georgia", on: date)?.countryID == "GE")
+        #expect(catalog.resolveLegacy("Georgia, Germany", on: date) == nil)
+    }
     @Test func historicalPresetsAndOutOfRangeLabelsAreExplicit() throws {
         let soviet = try #require(catalog.country(id: "SUHH"))
         #expect(soviet.applies(on: GameDate(year: 1980, month: 1, day: 1)))
