@@ -132,6 +132,9 @@ public enum FinanceEngine {
             }
         }
         if actions.count > 12 { plan.rejections.append("At most twelve financial actions may happen in one turn.") }
+        // Closed rows only keep their ID reusable; retain the 50 most recent so the store's 200-row bound can never be reached.
+        let deadIndexes = plan.positions.indices.filter { plan.positions[$0].principalMinor == 0 && [.asset, .investment].contains(plan.positions[$0].kind) }
+        if deadIndexes.count > 50 { let drop = Set(deadIndexes.dropLast(50)); plan.positions = plan.positions.enumerated().filter { !drop.contains($0.offset) }.map(\.element) }
         return plan
     }
 

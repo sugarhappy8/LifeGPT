@@ -129,6 +129,17 @@ import Testing
         #expect(again.positions.filter { $0.id == "a0" }.count == 1 && again.positions.first { $0.id == "a0" }?.principalMinor == 100)
     }
 
+    @Test func closedPositionRowsArePrunedSoTheStoreBoundHolds() throws {
+        var plan = FinanceEngine.Plan(positions: [], balance: 1_000_000)
+        for n in 0..<250 {
+            plan = try FinanceEngine.actions([.init(action: .buyAsset, id: "a\(n)", name: "Asset \(n)", amountMinor: 100),
+                                              .init(action: .sellAsset, id: "a\(n)", name: "Asset \(n)", amountMinor: 100)],
+                                             date: date, age: 30, economy: economy, streams: [], plan: plan)
+        }
+        #expect(plan.rejections.isEmpty && plan.positions.count <= 50)
+        #expect(plan.positions.contains { $0.id == "a249" })
+    }
+
     @Test func taxReservesAndBusinessAccountsDoNotCountTowardTheAccountCap() {
         var existing = [BankAccount(id: "personal", name: "Personal", kind: .personal)]
         for n in 0..<19 { existing.append(BankAccount(id: "reserve\(n)", name: "Reserve \(n)", kind: .taxReserve, businessId: "b\(n)")) }
