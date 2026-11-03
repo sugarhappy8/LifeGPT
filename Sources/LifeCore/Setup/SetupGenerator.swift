@@ -13,13 +13,27 @@ public struct SetupDraft: Codable, Sendable, Equatable {
         self.placeBrief = placeBrief; self.economy = economy; self.familyWealthTier = familyWealthTier
         self.cast = cast; self.lifeState = lifeState; self.opening = opening; self.choices = choices
     }
+    public static let maxChoiceLength = 300
+    /// Trims text, drops blank choices, caps choice length and canonicalises the currency code.
+    public func normalized() -> SetupDraft {
+        var d = self
+        func trim(_ t: String) -> String { t.trimmingCharacters(in: .whitespacesAndNewlines) }
+        d.placeBrief = trim(placeBrief); d.opening = trim(opening)
+        d.economy.currency = trim(economy.currency).uppercased()
+        d.choices = choices.map(trim).filter { !$0.isEmpty }.map { String($0.prefix(Self.maxChoiceLength)) }
+        return d
+    }
     public func validate() throws {
         try economy.validate()
-        guard !placeBrief.isEmpty, placeBrief.count <= 20_000, !opening.isEmpty, opening.count <= 20_000,
-              cast.count <= 20, choices.count <= 4,
-              cast.allSatisfy({ !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.name.count <= 100 }) else {
+        func blank(_ t: String) -> Bool { t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let names = cast.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        guard !blank(placeBrief), placeBrief.count <= 20_000, !blank(opening), opening.count <= 20_000,
+              cast.count <= 20, choices.count <= 4, choices.allSatisfy({ !blank($0) && $0.count <= Self.maxChoiceLength }),
+              !blank(economy.currency),
+              cast.allSatisfy({ !blank($0.name) && $0.name.count <= 100 }) else {
             throw ValidationError.invalid("The setup was incomplete or too large. Generate again or use the editable manual setup.")
         }
+        guard Set(names).count == names.count else { throw ValidationError.invalid("Cast names must be unique (ignoring case).") }
     }
     /// Preset-local economic estimates. Unresolved legacy callers retain their explicit demo sample.
     public static func manual(for character: NewCharacter) -> SetupDraft {
@@ -46,13 +60,16 @@ public struct SetupDraft: Codable, Sendable, Equatable {
     public static func inferWealth(_ background: String) -> WealthTier {
         let text = background.lowercased()
         if StartingPremise.isRoyal(text) { return .ultraWealthy }
-        if text.contains("billionaire") || text.contains("ultra-wealthy") { return .ultraWealthy }
-        if text.contains("millionaire") || text.contains("wealthy") || text.contains("rich family") { return .wealthy }
-        if text.contains("homeless") || text.contains("destitute") { return .destitute }
-        if text.contains("poor") || text.contains("poverty") { return .poor }
-        if text.contains("working class") || text.contains("working-class") { return .working }
-        if text.contains("comfortable") { return .comfortable }
-        return .middle
+        // Whole words only; the earliest mention in the text decides.
+        let tiers: [(String, WealthTier)] = [(#"billionaire|ultra-wealthy"#, .ultraWealthy), (#"millionaire|wealthy|rich family"#, .wealthy),
+            (#"homeless|destitute"#, .destitute), (#"poor|poverty"#, .poor), (#"working[- ]class"#, .working), (#"comfortable"#, .comfortable)]
+        var best: (Int, WealthTier)?
+        for (pattern, tier) in tiers {
+            guard let r = text.range(of: #"(?<![\p{L}\p{N}])(?:"# + pattern + #")(?![\p{L}\p{N}])"#, options: .regularExpression) else { continue }
+            let at = text.distance(from: text.startIndex, to: r.lowerBound)
+            if best == nil || at < best!.0 { best = (at, tier) }
+        }
+        return best?.1 ?? .middle
     }
 }
 
@@ -95,15 +112,20 @@ public struct SetupGenerator: Sendable {
                 maxOutputTokens: min(8192, provider.capabilities.maxContextTokens / 3), jsonSchema: nil))
             try LLMNarrator.check(response)
             do {
-                var draft = try JSONDecoder().decode(SetupDraft.self, from: Data(LLMNarrator.jsonObject(in: response.text).utf8))
+                var draft = try JSONDecoder().decode(SetupDraft.self, from: Data(LLMNarrator.jsonObject(in: response.text).utf8)).normalized()
                 if let preset {
                     guard draft.economy.currency == reference.economy.currency, draft.economy.minorUnitsPerUnit == reference.economy.minorUnitsPerUnit else {
                         throw ValidationError.invalid("Keep the selected nation's accounting currency and denomination.")
+                    }
+                    let ref = reference.economy.medianMonthlyIncomeMinor, median = draft.economy.medianMonthlyIncomeMinor
+                    guard median >= ref / 10, median / 10 <= ref else {
+                        throw ValidationError.invalid("Keep the median monthly income within 0.1x to 10x of the selected nation's estimate (\(ref)).")
                     }
                     draft.lifeState.removeAll { $0.key == "residence" }
                     draft.lifeState.append(LifeStateChange(key: "residence", value: CountryCatalog.shared.displayName(preset, on: startDate)))
                 }
                 try draft.validate()
+                try Self.checkContinuity(draft, character: character, economy: reference.economy, jurisdiction: preset, on: startDate)
                 try ContentGuard.check(draft.opening + draft.placeBrief, characterAge: character.startingAge)
                 return draft
             } catch { lastProblem = String(error.localizedDescription.prefix(300)) }
@@ -112,9 +134,24 @@ public struct SetupGenerator: Sendable {
     }
 }
 
+extension SetupGenerator {
+    /// Applies the rules createChat will apply, so violations feed the corrective retry instead of failing on Begin.
+    static func checkContinuity(_ draft: SetupDraft, character: NewCharacter, economy: EconomyCard, jurisdiction: JurisdictionRef?, on date: GameDate) throws {
+        var problems = draft.cast.filter { $0.status.map { !["alive"].contains($0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) && !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false }
+            .map { "All starting cast must be alive: \($0.name)" }
+        var truth = GroundTruth(character: Character(from: character), economy: economy, balanceMinor: 0, incomeStreams: [], recentLedger: [],
+            cast: [], recentDecisions: [], lifeState: [:], guardrails: Guardrails(sideHustleCapMinor: 0, giftCapMinor: 0, windfallCapMinor: 0, singleEntryBoundMinor: 0, windfallMinFate: 0))
+        truth.currentJurisdiction = jurisdiction
+        problems += ContinuityValidator.validate(Resolution(zoom: .scene, timeAdvance: TimeAdvance(unit: .days, amount: 0),
+            lifeStateChanges: draft.lifeState, castUpdates: draft.cast), truth: truth).rejections
+        guard problems.isEmpty else { throw ValidationError.invalid(problems.joined(separator: "; ")) }
+    }
+}
+
 extension ChatLibrary {
     /// Failed initialization removes the incomplete save; callers never see half a setup.
     public func createChat(character: NewCharacter, setup: SetupDraft, settings: SessionSettings) throws -> (id: UUID, store: LifeStore) {
+        let setup = setup.normalized()
         try setup.validate()
         var character = character; character.familyWealthTier = setup.familyWealthTier
         let created = try createChat(character: character, economy: setup.economy)
