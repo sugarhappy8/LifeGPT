@@ -1,6 +1,8 @@
 import Foundation
 
 public enum PathEngine {
+    /// The canonical stored form of a path id; every comparison against stored paths must use it.
+    public static func normalizedID(_ id: String) -> String { id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
     public struct Plan: Sendable {
         public var paths: [OpportunityPath]
         public var ledger: [NewLedgerEntry] = []
@@ -13,7 +15,7 @@ public enum PathEngine {
         var cash = balance
         var seen = Set<String>()
         for update in changes.prefix(5) {
-            let id = update.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let id = normalizedID(update.id)
             func reject(_ reason: String) { result.rejections.append("path \(update.title): \(reason)") }
             guard !id.isEmpty, id.count <= 100, !update.title.isEmpty, update.title.count <= 200,
                   update.notes.count <= 2000, seen.insert(id).inserted else { reject("invalid or repeated path"); continue }

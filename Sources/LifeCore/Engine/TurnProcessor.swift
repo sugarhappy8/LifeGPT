@@ -192,7 +192,8 @@ public actor TurnProcessor {
         var resolution = output.resolution
         resolution.castUpdates = resolution.castUpdates.map { original in
             var update = original
-            if let person = CastIdentity.resolve(update.name, in: truth.cast) { update.name = person.name }
+            let relation = update.relation?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let person = CastIdentity.resolve(update.name, in: truth.cast, relation: relation) { update.name = person.name }
             return update
         }
         let start = truth.character.currentDate
@@ -230,8 +231,8 @@ public actor TurnProcessor {
             businessChanges: resolution.businessChanges ?? [], obligationChanges: resolution.obligationChanges ?? [],
             accountChanges: resolution.accountChanges ?? [], saleProposals: resolution.saleProposals ?? [], revision: store.revision() + 1)
         evaluation.rejections += prepared.rejections
-        let newPaths = (resolution.pathUpdates ?? []).filter { update in !oldPaths.contains { $0.id == update.id } }
-            .map { OpportunityPath(id: $0.id, title: $0.title, stage: $0.stage, startedOn: evaluation.newDate) }
+        let newPaths = (resolution.pathUpdates ?? []).filter { update in !oldPaths.contains { $0.id == PathEngine.normalizedID(update.id) } }
+            .map { OpportunityPath(id: PathEngine.normalizedID($0.id), title: $0.title, stage: $0.stage, startedOn: evaluation.newDate) }
         let income = IncomeEngine.plan(changes: resolution.incomeStreams, existing: truth.incomeStreams,
             start: start, end: evaluation.newDate, economy: truth.economy, playStyle: truth.playStyle,
             accounts: prepared.accounts, paths: oldPaths + newPaths, rules: rules, personalAccountId: prepared.state.defaultPersonalAccountId,

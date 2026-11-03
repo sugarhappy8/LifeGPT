@@ -24,6 +24,61 @@ import Testing
         resolution.events = [EventRecord(title: "An uncanny return", importance: .major, uncanny: true)]
         #expect(ContinuityValidator.validate(resolution, truth: truth).cast.count == 1)
     }
+    private func castTurn(seed: [CastUpdate], updates: [CastUpdate]) async throws -> (LifeStore, TurnResult) {
+        let store = try TestChat.chat(try TestChat.library()).store
+        try store.seedHistory(cast: seed, decisions: [], lifeState: [])
+        let narrator = ScriptedNarrator(narrate: [.output(output("A call.", cast: updates))])
+        let result = try await TurnProcessor(store: store, narrator: narrator, fate: FixedFate([42])).play("I talk.")
+        return (store, result)
+    }
+    @Test func newPersonWithBareFirstNameDoesNotOverwriteExistingRelative() async throws {
+        let (store, _) = try await castTurn(seed: [CastUpdate(name: "Mary Smith", relation: "mother", notes: "N", status: "alive")],
+            updates: [CastUpdate(name: "Mary", relation: "neighbour", notes: "new friend", status: nil)])
+        let cast = try store.castMembers()
+        #expect(cast.first { $0.name == "Mary Smith" }?.relation == "mother")
+        #expect(cast.first { $0.name == "Mary Smith" }?.notes == "N")
+        #expect(cast.contains { $0.name == "Mary" && $0.relation == "neighbour" })
+    }
+    @Test func familyAliasWithoutConflictingRelationStillResolves() async throws {
+        let (store, _) = try await castTurn(seed: [CastUpdate(name: "Mary Smith", relation: "mother", notes: "N", status: "alive")],
+            updates: [CastUpdate(name: "Mom", relation: nil, notes: "called", status: nil),
+                      CastUpdate(name: "Mary", relation: "Mother", notes: "again", status: nil)])
+        let cast = try store.castMembers()
+        #expect(cast.count == 1)
+        #expect(cast.first { $0.name == "Mary Smith" }?.relation?.lowercased() == "mother")
+        #expect(!cast.contains { $0.name == "Mom" })
+    }
+    @Test func emptyCastStringsPreserveStoredValues() async throws {
+        let (store, result) = try await castTurn(seed: [CastUpdate(name: "Mary Smith", relation: "mother", notes: "N", status: "alive")],
+            updates: [CastUpdate(name: "Mary Smith", relation: "", notes: "  ", status: "")])
+        #expect(result.rejections.isEmpty)
+        let mary = try #require(try store.castMembers().first { $0.name == "Mary Smith" })
+        #expect(mary.relation == "mother" && mary.notes == "N" && mary.status == "alive")
+    }
+    @Test func lifeStateReservedKeysAreNormalisedBeforeChecking() throws {
+        let store = try TestChat.chat(try TestChat.library()).store
+        let truth = try GroundTruthBuilder.build(store: store, rules: .v1)
+        let keys = ["country-id", "Birth-Date", "tax profile", "legal_status", "Legal-Status", "_engine-foo", " Account.Access "]
+        let resolution = Resolution(zoom: .scene, timeAdvance: TimeAdvance(unit: .days, amount: 0),
+            lifeStateChanges: keys.map { LifeStateChange(key: $0, value: "x") } + [LifeStateChange(key: "Favourite-Food", value: "pie")])
+        let verdict = ContinuityValidator.validate(resolution, truth: truth)
+        #expect(verdict.rejections.count == keys.count)
+        #expect(verdict.state.map(\.key) == ["favourite_food"])
+    }
+    @Test(arguments: ["a 12 years old girl, sexual scene", "aged 12, sexual", "a twelve year old girl, nude", "16 yo, sex",
+                      "13 yrs old naked", "a 9 year-old, porn", "age 14 erotic", "fourteen-years-old sexual"])
+    func contentGuardCatchesMinorAgePhrasings(_ text: String) {
+        #expect(throws: ValidationError.self) { try ContentGuard.check(text, characterAge: 30) }
+    }
+    @Test func contentGuardAllowsAdultAgesAndBenignPhrases() throws {
+        try ContentGuard.check("a 32 years old woman, sexual scene", characterAge: 30)
+        try ContentGuard.check("aged 45, sexual", characterAge: 30)
+        for text in ["I watch the comet with the naked eye", "I sit through sex ed class", "a classmate of the opposite sex", "same sex friends", "sex education"] {
+            try ContentGuard.check(text, characterAge: 15)
+        }
+        #expect(throws: ValidationError.self) { try ContentGuard.check("a naked eye and a nude scene", characterAge: 15) }
+        #expect(throws: ValidationError.self) { try ContentGuard.check("explicit sex", characterAge: 15) }
+    }
     @Test func engineStoresNotesChoicesAndStopsAtDeath() async throws {
         let store = try TestChat.chat(try TestChat.library()).store
         var ending = output("The life reaches its end.")
