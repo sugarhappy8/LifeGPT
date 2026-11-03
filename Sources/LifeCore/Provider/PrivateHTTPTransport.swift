@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Ephemeral networking with no ambient cookies/credentials and no redirects to unselected destinations.
 public struct PrivateHTTPTransport: HTTPTransport {

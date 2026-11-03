@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public enum HTTPResponseCheck {
     public static func validate(_ data: Data, response: HTTPURLResponse, secrets: [String]) throws {

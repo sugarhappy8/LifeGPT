@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// generateContent REST adapter. JSON format follows the documented responseFormat.text contract.
 public struct GeminiProvider: AIProvider {

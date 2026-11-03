@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// LM Studio and Ollama's common /v1/chat/completions surface. No cloud fallback.
 public struct LocalProvider: AIProvider {

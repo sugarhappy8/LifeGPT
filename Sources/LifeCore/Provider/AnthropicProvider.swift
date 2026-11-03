@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// How requests reach the network; a stub in tests.
 public protocol HTTPTransport: Sendable {
