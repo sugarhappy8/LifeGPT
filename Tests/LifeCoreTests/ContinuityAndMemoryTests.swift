@@ -73,6 +73,9 @@ import Testing
     @Test func contentGuardAllowsAdultAgesAndBenignPhrases() throws {
         try ContentGuard.check("a 32 years old woman, sexual scene", characterAge: 30)
         try ContentGuard.check("aged 45, sexual", characterAge: 30)
+        for text in ["a twenty-one-year-old woman, sexual scene", "thirty-five years old, sex", "forty two yo, sexual", "aged twenty five, sex"] {
+            try ContentGuard.check(text, characterAge: 30)
+        }
         for text in ["I watch the comet with the naked eye", "I sit through sex ed class", "a classmate of the opposite sex", "same sex friends", "sex education"] {
             try ContentGuard.check(text, characterAge: 15)
         }

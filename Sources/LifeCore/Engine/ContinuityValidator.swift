@@ -69,7 +69,7 @@ public enum ContentGuard {
     public static func check(_ text: String, characterAge: Int) throws {
         let lower = text.lowercased()
         let sexual = #"\b(sex|sexual|porn|pornographic|nude|naked|erotic|intercourse|masturbat\w*|orgasm\w*|molest\w*)\b"#
-        let num = #"(?:1[0-7]|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)"#
+        let num = #"(?<!(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[- ])(?:1[0-7]|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)"#
         let minor = #"\b(child|children|minor|underage|preteen|toddler|schoolgirl|schoolboy|"# + num + #")[- ]?(?:years?|yrs?)[- ]?old\b|\b"# + num + #"[- ]?(?:yo|y/o)\b|\baged?\s+"# + num + #"\b|\b(child|children|underage|preteen|toddler)\b"#
         guard lower.range(of: sexual, options: .regularExpression) != nil else { return }
         // Benign phrases are ignored only for under-18 characters; text that names a minor is never exempted.
