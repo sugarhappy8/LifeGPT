@@ -58,6 +58,8 @@ struct GeographyTests {
         #expect(ga == JurisdictionRef(countryID: "US", subdivisionID: "US-GA", locality: "Atlanta"))
         #expect(catalog.resolveLegacy("Tbilisi, Georgia", on: date)?.countryID == "GE")
         #expect(catalog.resolveLegacy("Georgia, Germany", on: date) == nil)
+        // A longer comma-joined name beats its own shorter prefix part ("Congo" is CG).
+        #expect(catalog.resolveLegacy("Bukavu, Congo, Democratic Republic of the", on: date) == JurisdictionRef(countryID: "CD", locality: "Bukavu"))
     }
     @Test func historicalPresetsAndOutOfRangeLabelsAreExplicit() throws {
         let soviet = try #require(catalog.country(id: "SUHH"))

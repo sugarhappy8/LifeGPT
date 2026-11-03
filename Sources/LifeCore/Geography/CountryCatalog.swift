@@ -142,6 +142,9 @@ public struct CountryCatalog: Sendable {
         func covered(_ keys: [String]) -> Set<Int> { keys.map(Self.normalized).reduce(into: Set<Int>()) { $0.formUnion((windows[$1] ?? []).reduce(into: Set<Int>()) { $0.formUnion($1) }) } }
         func regions(of c: CountryPreset) -> [SubdivisionPreset] { subdivisions(countryID: c.id).filter { r in !covered([r.name, r.id] + r.aliases).isEmpty } }
         var matches = countries.filter { c in !covered([c.name, c.id] + c.aliases).isEmpty }
+        let coverage = Dictionary(uniqueKeysWithValues: matches.map { ($0.id, covered([$0.name, $0.id] + $0.aliases)) })
+        // Longest match wins: "Congo, Democratic Republic of the" (CD) outranks its own prefix part "Congo" (CG).
+        matches = matches.filter { m in !matches.contains { o in o.id != m.id && coverage[m.id]!.isStrictSubset(of: coverage[o.id]!) } }
         let applicable = matches.filter { $0.applies(on: date) }
         if !applicable.isEmpty { matches = applicable }
         else if matches.count == 1, case let modern = matches[0].successorIDs.compactMap({ country(id: $0) }).filter({ $0.applies(on: date) }), modern.count == 1 { matches = modern }
