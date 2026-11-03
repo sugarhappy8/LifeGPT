@@ -55,10 +55,11 @@ public enum BankingEngine {
         guard try store.revision() == expectedRevision else { throw ValidationError.invalid("This life changed. Reopen Manage finances before editing.") }
         let character = try store.character()
         let opened = open(openings, existing: try store.accounts())
+        let business = try store.businessSimulation()
         let income = IncomeEngine.plan(changes: changes, existing: try store.incomeStreams(), start: character.currentDate,
             end: character.currentDate, economy: try store.economy(), playStyle: try store.sessionSettings().playStyle,
-            accounts: opened.accounts, paths: try store.paths(), personalAccountId: try store.businessSimulation().defaultPersonalAccountId,
-            birthDate: character.birthDate)
+            accounts: opened.accounts, paths: try store.paths(), personalAccountId: business.defaultPersonalAccountId,
+            birthDate: character.birthDate, closingAccountIds: Set(business.pendingAccountChanges.filter { $0.action == .close }.map(\.accountId)))
         var plan = FinanceEngine.Plan(positions: [], balance: 0,
             accountBalances: Dictionary(uniqueKeysWithValues: opened.accounts.filter(\.isAccessible).map { ($0.id, $0.balanceMinor) }))
         plan = try transfer(transfers, date: character.currentDate, plan: plan)

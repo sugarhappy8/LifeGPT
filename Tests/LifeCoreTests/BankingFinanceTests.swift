@@ -183,6 +183,22 @@ import Testing
         #expect(try store.incomeStreams().isEmpty)
     }
 
+    @Test func manageFinancesRejectsStreamIntoAccountWithPendingClose() throws {
+        let store = try TestChat.chat(try TestChat.library()).store
+        try BankingEngine.manage(store: store, openings: [.init(id: "side", name: "Side", kind: .personal)], changes: [], transfers: [], expectedRevision: store.revision())
+        try store.dbQueue.write { db in
+            var state = try LifeStore.simulationRecord(db, key: "business", default: BusinessSimulationState())
+            state.pendingAccountChanges = [.init(action: .close, accountId: "side", balanceDestinationAccountId: "personal", effectiveFrom: "2099-01-01")]
+            try LifeStore.writeSimulationRecord(db, key: "business", value: state)
+        }
+        #expect(throws: ValidationError.self) {
+            try BankingEngine.manage(store: store, openings: [], changes: [
+                IncomeStreamChange(action: .start, name: "Shop", kind: .wage, tier: "entry", monthlyMinor: 200_000, accountId: "side")
+            ], transfers: [], expectedRevision: store.revision())
+        }
+        #expect(try store.incomeStreams().isEmpty)
+    }
+
     @Test func businessIncomeDoesNotSilentlyPayPersonalBillsAndDoesNotDuplicatePathProfit() throws {
         let path = OpportunityPath(id: "website", title: "Website", stage: .profit, startedOn: date)
         let stream = IncomeStream(name: "Website subscriptions", kind: .business, tier: nil, monthlyMinor: 5_000_000,
