@@ -7,7 +7,8 @@ struct FiscalProfileView: View {
     @State private var jurisdiction: JurisdictionRef?
     let date: GameDate
     let economy: EconomyCard
-    private let originalOverrides: FiscalOverrides
+    @State private var originalOverrides: FiscalOverrides
+    private let overridesFor: (JurisdictionRef?) -> FiscalOverrides?
     let onSave: (JurisdictionRef, FiscalOverrides) throws -> Void
     @State private var income = ""
     @State private var employee = ""
@@ -18,11 +19,11 @@ struct FiscalProfileView: View {
     @State private var error: String?
 
     init(jurisdiction: JurisdictionRef?, date: GameDate, economy: EconomyCard,
-         currentOverrides: FiscalOverrides? = nil,
+         currentOverrides: FiscalOverrides? = nil, overridesFor: @escaping (JurisdictionRef?) -> FiscalOverrides? = { _ in nil },
          onSave: @escaping (JurisdictionRef, FiscalOverrides) throws -> Void) {
         _jurisdiction = State(initialValue: jurisdiction)
-        self.date = date; self.economy = economy; self.onSave = onSave
-        originalOverrides = currentOverrides ?? FiscalOverrides()
+        self.date = date; self.economy = economy; self.onSave = onSave; self.overridesFor = overridesFor
+        _originalOverrides = State(initialValue: currentOverrides ?? FiscalOverrides())
         func percent(_ basis: Int?) -> String { basis.map { String(Double($0) / 100) } ?? "" }
         _income = State(initialValue: percent(currentOverrides?.incomeTaxBasisPoints))
         _employee = State(initialValue: percent(currentOverrides?.employeeSocialBasisPoints))
@@ -30,6 +31,15 @@ struct FiscalProfileView: View {
         _business = State(initialValue: percent(currentOverrides?.businessTaxBasisPoints))
         _gains = State(initialValue: percent(currentOverrides?.capitalGainsBasisPoints))
         _exchange = State(initialValue: currentOverrides?.accountingUnitsPerLocalUnit.map { String($0) } ?? "")
+    }
+    /// Reload every field from the overrides stored for the newly selected jurisdiction (blank when it has none).
+    private func load(_ overrides: FiscalOverrides?) {
+        func percent(_ basis: Int?) -> String { basis.map { String(Double($0) / 100) } ?? "" }
+        originalOverrides = overrides ?? FiscalOverrides()
+        income = percent(overrides?.incomeTaxBasisPoints); employee = percent(overrides?.employeeSocialBasisPoints)
+        employer = percent(overrides?.employerContributionBasisPoints); business = percent(overrides?.businessTaxBasisPoints)
+        gains = percent(overrides?.capitalGainsBasisPoints); exchange = overrides?.accountingUnitsPerLocalUnit.map { String($0) } ?? ""
+        error = nil
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -93,6 +103,7 @@ struct FiscalProfileView: View {
                 Button("Apply from \(date.iso)") { save() }.buttonStyle(.borderedProminent).disabled(jurisdiction == nil)
             }.padding(20)
         }.textFieldStyle(.roundedBorder).frame(width: 680, height: 740)
+        .onChange(of: jurisdiction) { _, new in load(overridesFor(new)) }
     }
     private var resolvedProfile: FiscalProfile? {
         guard let jurisdiction, let override = try? edits() else { return nil }

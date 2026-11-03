@@ -329,3 +329,32 @@ struct BusinessSimulationTests {
         #expect(bad.state.obligations.filter { $0.id == "emp" }.count == 1)
     }
 }
+
+struct BusinessFormLogicTests {
+    @Test func fiscalOverridesAreLookedUpPerJurisdiction() {
+        var state = BusinessSimulationState()
+        let de = JurisdictionRef(countryID: "DE"), fr = JurisdictionRef(countryID: "FR")
+        state.fiscalOverrides = [BusinessFiscalOverride(jurisdiction: de, effectiveFrom: GameDate(iso: "2004-01-01")!, values: FiscalOverrides(businessTaxBasisPoints: 1200))]
+        #expect(state.currentFiscalOverrides(for: de)?.businessTaxBasisPoints == 1200)
+        #expect(state.currentFiscalOverrides(for: fr) == nil)
+        #expect(state.currentFiscalOverrides(for: nil) == nil)
+    }
+    @Test func closingTheDefaultAccountPicksAnotherDestinationAndReplacement() {
+        let a = BankAccount(id: "a", name: "A", kind: .personal), b = BankAccount(id: "b", name: "B", kind: .personal)
+        let biz = BankAccount(id: "biz", name: "Biz", kind: .business, businessId: "co")
+        let defaults = BusinessFormLogic.closeDefaults(accounts: [a, biz, b], closing: "a", preferred: "a")
+        #expect(defaults.destination == "biz" || defaults.destination == "b")
+        #expect(defaults.destination != "a")
+        #expect(defaults.replacement == "b")
+        #expect(BusinessFormLogic.closeDefaults(accounts: [a, b], closing: "a", preferred: "b").destination == "b")
+        let alone = BusinessFormLogic.closeDefaults(accounts: [a], closing: "a", preferred: "a")
+        #expect(alone.destination == "" && alone.replacement == "")
+    }
+    @Test func hiddenPayrollFieldsAreIgnoredForOtherKinds() throws {
+        let expense = try BusinessFormLogic.contractDetails(kind: .expense, birthDate: "junk", hours: "0")
+        #expect(expense.birthDate == nil && expense.monthlyHours == nil)
+        let payroll = try BusinessFormLogic.contractDetails(kind: .payroll, birthDate: "1990-01-01", hours: "160")
+        #expect(payroll.birthDate == "1990-01-01" && payroll.monthlyHours == 160)
+        #expect(throws: (any Error).self) { try BusinessFormLogic.contractDetails(kind: .ownerSalary, birthDate: "", hours: "abc") }
+    }
+}

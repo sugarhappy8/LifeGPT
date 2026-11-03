@@ -148,9 +148,11 @@ private struct SetupReviewView: View {
             Divider(); SectionLabel(text: "The first people")
             ForEach(draft.cast.indices, id: \.self) { index in
                 HStack {
-                    TextField("Name", text: $draft.cast[index].name)
-                    TextField("Relation", text: Binding(get: { draft.cast[index].relation ?? "" }, set: { draft.cast[index].relation = $0 }))
-                    Button { draft.cast.remove(at: index) } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain).accessibilityLabel("Remove person")
+                    TextField("Name", text: Binding(get: { draft.cast.indices.contains(index) ? draft.cast[index].name : "" },
+                                                    set: { if draft.cast.indices.contains(index) { draft.cast[index].name = $0 } }))
+                    TextField("Relation", text: Binding(get: { draft.cast.indices.contains(index) ? draft.cast[index].relation ?? "" : "" },
+                                                        set: { if draft.cast.indices.contains(index) { draft.cast[index].relation = $0 } }))
+                    Button { if draft.cast.indices.contains(index) { draft.cast.remove(at: index) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.plain).accessibilityLabel("Remove person")
                 }
             }
             Button("Add a person") { draft.cast.append(CastUpdate(name: "", relation: "", notes: nil, status: "alive")) }.disabled(draft.cast.count >= 20)

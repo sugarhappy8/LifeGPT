@@ -136,6 +136,7 @@ private struct WelcomeView: View {
                 SettingsLink { Text("Choose a narrator") }.buttonStyle(.bordered).controlSize(.large)
             }
             if let error = model.error { NoticeBar(text: error, isError: true) { model.error = nil } }
+            if let information = model.information { NoticeBar(text: information) { model.information = nil } }
             Spacer()
             Text("Saved on your Mac. Your AI provider is your choice.").font(.caption).foregroundStyle(.secondary)
         }.padding(48).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
