@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Testing
 @testable import LifeCore
 
@@ -97,5 +100,59 @@ import Testing
         #expect(try store.economy().version == 1)
         var wrong = draft; wrong.economy.currency = "EUR"
         #expect(throws: ValidationError.self) { try wrong.validate(accountingCurrency: economy) }
+    }
+
+    let request = ProviderRequest(system: "System", user: "User", maxOutputTokens: 2048, jsonSchema: #"{"type":"object","properties":{}}"#)
+
+    @Test func usageWriteFailureDoesNotDiscardAPaidResponse() async throws {
+        let blocker = FileManager.default.temporaryDirectory.appendingPathComponent("usage-blocker-\(UUID())")
+        try Data("file".utf8).write(to: blocker)
+        defer { try? FileManager.default.removeItem(at: blocker) }
+        let tracker = try UsageTracker(url: blocker.appendingPathComponent("usage.json"))
+        let metered = MeteredProvider(base: StubProvider(responses: [StubProvider.reply("{}")]), tracker: tracker, providerName: "t", model: "m",
+            inputUSDPerMillion: 1, outputUSDPerMillion: 1, dailyLimit: 10)
+        let response = try await metered.complete(request)
+        #expect(response.text == "{}")
+        #expect(await tracker.history().count == 1)
+        #expect(await tracker.writeFailure != nil)
+    }
+
+    @Test func billedEmptyReplyIsMeteredAndMapsToTruncation() async throws {
+        let transport = StubTransport(body: #"{"candidates":[{"content":{"parts":[{"text":"thinking","thought":true}]},"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":5000,"thoughtsTokenCount":900}}"#)
+        let tracker = try UsageTracker(url: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID())/usage.json"))
+        let metered = MeteredProvider(base: GeminiProvider(apiKey: "k", transport: transport), tracker: tracker, providerName: "g", model: "m",
+            inputUSDPerMillion: 1, outputUSDPerMillion: 1, dailyLimit: 10)
+        let response = try await metered.complete(request)
+        #expect(response.text.isEmpty && response.stopReason == .maxTokens)
+        #expect(await tracker.history().first?.inputTokens == 5000)
+        #expect(throws: NarratorError.self) { try LLMNarrator.check(response) }
+        let local = StubTransport(body: #"{"choices":[{"message":{"content":""},"finish_reason":"length"}],"usage":{"prompt_tokens":70,"completion_tokens":30}}"#)
+        let reply = try await LocalProvider(baseURL: URL(string: "http://localhost:1234")!, model: "m", transport: local).complete(request)
+        #expect(reply.text.isEmpty && reply.stopReason == .maxTokens && reply.inputTokens == 70)
+    }
+
+    @Test(arguments: ["model_context_window_exceeded", "pause_turn"])
+    func anthropicNonEndStopsAreTruncated(_ reason: String) async throws {
+        let body = okResponse.replacingOccurrences(of: "end_turn", with: reason)
+        let response = try await AnthropicProvider(apiKey: "k", transport: StubTransport(body: body)).complete(request)
+        #expect(throws: NarratorError.truncated) { try LLMNarrator.check(response) }
+    }
+
+    @Test func localMapsFinishReasonsExplicitly() async throws {
+        func stop(_ reason: String) async throws -> StopReason {
+            let body = #"{"choices":[{"message":{"content":"x"},"finish_reason":"\#(reason)"}]}"#
+            return try await LocalProvider(baseURL: URL(string: "http://localhost:1234")!, model: "m", transport: StubTransport(body: body)).complete(request).stopReason
+        }
+        #expect(try await stop("stop") == .endTurn)
+        #expect(try await stop("length") == .maxTokens)
+        #expect(try await stop("content_filter") == .refusal)
+        #expect(try await stop("tool_calls") == .other("tool_calls"))
+    }
+
+    @Test func cancelledURLErrorsBecomeCancellation() async throws {
+        struct Throwing: HTTPTransport {
+            func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) { throw URLError(.cancelled) }
+        }
+        await #expect(throws: CancellationError.self) { _ = try await ResilientTransport(base: Throwing()).send(URLRequest(url: URL(string: "https://example.com")!)) }
     }
 }

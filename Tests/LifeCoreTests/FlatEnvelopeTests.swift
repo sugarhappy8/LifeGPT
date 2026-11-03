@@ -93,4 +93,24 @@ import Testing
         let usage = await tracker.history()
         #expect(usage.count == 2 && usage.reduce(0) { $0 + $1.outputTokens } == 1_000)
     }
+
+    @Test(arguments: ["```json\n%@\n```", "Here is the {resolved} part:\n%@", "<think>I weigh {options}</think>%@"])
+    func wrappedInnerResolutionIsExtracted(_ pattern: String) async throws {
+        let store = try TestChat.chat(TestChat.library()).store
+        let inner = String(decoding: try OutputCoding.encoder.encode(output("x").resolution), as: UTF8.self)
+        let wire = try envelope(resolution: pattern.replacingOccurrences(of: "%@", with: inner), narration: "You look around.")
+        let request = NarratorRequest(groundTruth: try GroundTruthBuilder.build(store: store, rules: .v1),
+                                      playerInput: "I look around.", fate: 50, targetWords: 200, recentMessages: [])
+        let result = try await LLMNarrator(provider: provider([wire])).narrate(request)
+        #expect(result.output.narration == "You look around.")
+    }
+
+    @Test func jsonObjectExtractionIgnoresStrayBracesAndThinkBlocks() {
+        let object = #"{"a":"x } y {","b":{"c":1}}"#
+        for text in ["Sure {here} you go:\n" + object, object + "\n(note: {ignore})", "<think>{maybe}</think>\n```json\n" + object + "\n```",
+                     "  " + object + "  "] {
+            #expect(LLMNarrator.jsonObject(in: text) == object)
+        }
+        #expect(LLMNarrator.jsonObject(in: "no json here") == "no json here")
+    }
 }

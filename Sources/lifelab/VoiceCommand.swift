@@ -41,7 +41,11 @@ func runVoice(_ args: [String]) async -> Int32 {
     }
     let model = values["model"] ?? "claude-opus-5-5"
     let effort = values["effort"] ?? "medium"
-    let runs = max(1, values["runs"].flatMap { Int($0) } ?? 3)
+    var runs = 3
+    if let raw = values["runs"] {
+        guard let parsed = Int(raw), (1...1_000).contains(parsed) else { return fail("--runs must be a whole number from 1 to 1000") }
+        runs = parsed
+    }
 
     let scenarios: [VoiceScenario]
     let seed: VoiceSeed
@@ -52,7 +56,8 @@ func runVoice(_ args: [String]) async -> Int32 {
         return fail("could not read the fixtures: \(error)")
     }
 
-    let calls = scenarios.count * runs
+    let (calls, overflow) = scenarios.count.multipliedReportingOverflow(by: runs)
+    guard !overflow else { return fail("too many scenarios x runs") }
     print("Voice lab: \(scenarios.count) scenarios x \(runs) runs = \(calls) turns on \(model) (effort \(effort)).")
     print("Each turn is one API call, plus one repair call when the reply is unusable or rejected.")
     if let cost = VoiceCost.estimateUSD(model: model, calls: calls) {
@@ -75,9 +80,10 @@ func runVoice(_ args: [String]) async -> Int32 {
     defer { try? FileManager.default.removeItem(at: workDir) }
 
     var outcomes: [ScenarioOutcome] = []
+    var aborted = false
     do {
         let library = try ChatLibrary(directory: workDir)
-        for (s, scenario) in scenarios.enumerated() {
+        scenarioLoop: for (s, scenario) in scenarios.enumerated() {
             for run in 1...runs {
                 let store = try seed.makeChat(in: library)
                 let processor = TurnProcessor(store: store, narrator: LLMNarrator(provider: provider),
@@ -96,8 +102,10 @@ func runVoice(_ args: [String]) async -> Int32 {
                           + "accepted=\(Money.format(outcome.acceptedGainMinor, economy: .sampleUS2005)) "
                           + "tokens=\(outcome.inputTokens)/\(outcome.outputTokens)")
                 } catch ProviderError.http(let status, let body) where [400, 401, 403, 404].contains(status) {
-                    // A configuration problem, not a one-off: stop before spending more.
-                    return fail("HTTP \(status) from the API; stopping.\n\(body)", code: 1)
+                    // A configuration problem, not a one-off: stop before spending more, but keep the paid results.
+                    print("  HTTP \(status) from the API; stopping.\n\(body)")
+                    aborted = true
+                    break scenarioLoop
                 } catch {
                     print("  error: \(error)")
                     outcomes.append(ScenarioOutcome(id: scenario.id, jsonValidFirstTry: false, acceptedGainMinor: 0,
@@ -126,6 +134,7 @@ func runVoice(_ args: [String]) async -> Int32 {
         print("Report written to \(outPath)")
     } catch {
         print("Could not write the report: \(error)")
+        return 1
     }
-    return 0
+    return aborted || outcomes.contains { $0.error != nil } ? 1 : 0
 }

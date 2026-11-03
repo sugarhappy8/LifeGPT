@@ -46,7 +46,9 @@ public struct GeminiProvider: AIProvider {
         let blocked = (root["promptFeedback"] as? [String: Any])?["blockReason"] != nil
         let stop: StopReason = blocked || ["SAFETY", "PROHIBITED_CONTENT", "RECITATION", "BLOCKLIST"].contains(reason) ? .refusal
             : reason == "MAX_TOKENS" ? .maxTokens : reason == "STOP" ? .endTurn : .other(reason)
-        guard !text.isEmpty || stop == .refusal else { throw ProviderError.badResponse }
+        // Empty text is still a billed response when usage came back (for example thinking that used the whole budget):
+        // return it so metering counts it and the narrator maps the stop reason.
+        guard !text.isEmpty || stop == .refusal || !usage.isEmpty else { throw ProviderError.badResponse }
         return ProviderResponse(text: text, stopReason: stop, inputTokens: usage["promptTokenCount"] as? Int ?? 0,
             outputTokens: (usage["candidatesTokenCount"] as? Int ?? 0) + (usage["thoughtsTokenCount"] as? Int ?? 0))
     }

@@ -40,10 +40,11 @@ public struct LocalProvider: AIProvider {
               let message = choice["message"] as? [String: Any] else { throw ProviderError.badResponse }
         let reason = choice["finish_reason"] as? String ?? ""
         let refused = (message["refusal"] as? String)?.isEmpty == false
-        let stop: StopReason = refused || reason == "content_filter" ? .refusal : reason == "length" ? .maxTokens : .endTurn
+        let stop: StopReason = refused || reason == "content_filter" ? .refusal : reason == "length" ? .maxTokens
+            : ["stop", ""].contains(reason) ? .endTurn : .other(reason)
         let text = message["content"] as? String ?? ""
-        guard !text.isEmpty || stop == .refusal else { throw ProviderError.badResponse }
         let usage = root["usage"] as? [String: Any] ?? [:]
+        guard !text.isEmpty || stop == .refusal || !usage.isEmpty else { throw ProviderError.badResponse }
         return ProviderResponse(text: text, stopReason: stop,
             inputTokens: usage["prompt_tokens"] as? Int ?? ContextBuilder.estimatedTokens(request.system + request.user),
             outputTokens: usage["completion_tokens"] as? Int ?? ContextBuilder.estimatedTokens(text))

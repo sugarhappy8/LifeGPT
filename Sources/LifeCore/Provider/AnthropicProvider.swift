@@ -10,7 +10,9 @@ public protocol HTTPTransport: Sendable {
 
 extension URLSession: HTTPTransport {
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await self.data(for: request)
+        let data: Data, response: URLResponse
+        do { (data, response) = try await self.data(for: request) }
+        catch let error as URLError where error.code == .cancelled { throw CancellationError() }
         guard let http = response as? HTTPURLResponse else { throw ProviderError.badResponse }
         return (data, http)
     }

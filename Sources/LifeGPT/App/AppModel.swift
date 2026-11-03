@@ -148,7 +148,11 @@ final class AppModel {
         return MeteredProvider(base: base, tracker: tracker, providerName: config.provider.rawValue, model: config.model,
             inputUSDPerMillion: config.inputUSDPerMillion, outputUSDPerMillion: config.outputUSDPerMillion, dailyLimit: config.dailyLimitUSD)
     }
-    func refreshUsage() async { if let tracker { usage = await tracker.history() } }
+    func refreshUsage() async {
+        guard let tracker else { return }
+        usage = await tracker.history()
+        if let failure = await tracker.writeFailure, information == nil { information = "Usage history could not be saved (\(failure)). Responses are still counted until the app closes." }
+    }
     func testConnection(config: AppSettings, key: String) async throws -> String {
         if config.provider == .demo { return "The offline demo is ready. No network connection is needed." }
         let provider = try provider(using: config, keyOverride: key)

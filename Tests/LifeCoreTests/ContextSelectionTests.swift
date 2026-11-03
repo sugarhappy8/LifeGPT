@@ -232,4 +232,44 @@ import Testing
         #expect(provider.requests[0].user.contains("JP-13"))
         #expect(provider.requests[0].user.contains("\"rateBasisPoints\":1234") && provider.requests[0].user.contains("\"rateBasisPoints\":2345"))
     }
+
+    @Test func twoStepReservesTheDraftBeforePayingForProse() async throws {
+        var request = try request(mode: .off)
+        request.memory.excerpts = Array(repeating: String(repeating: "Old history. ", count: 25), count: 100)
+        var capabilities = StubProvider.capable; capabilities.maxContextTokens = 24_000
+        let draft = String(repeating: "The rain fell softly. ", count: 280)
+        let provider = StubProvider(capabilities: capabilities, responses: [StubProvider.reply(draft), StubProvider.reply(try wire())])
+        let result = try await LLMNarrator(provider: provider, mode: .twoStep).narrate(request)
+        #expect(provider.requests.count == 2 && result.output.narration == "You review the records.")
+    }
+
+    @Test func recentMessagesDroppedByBudgetBecomeRetrievableRecords() throws {
+        var request = try request()
+        request.recentMessages = (1...12).map { ChatMessage(id: Int64($0), role: .narrator, text: String(repeating: "Recent scene \($0). ", count: 250), date: TestChat.date) }
+        request.memory.excerpts = []
+        let bounded = try ContextBuilder.budget(request, contextTokens: 20_000, outputTokens: 2048, rejections: [])
+        #expect(bounded.recentMessages.count < 12)
+        let kept = Set(bounded.recentMessages.map(\.id))
+        for message in request.recentMessages where !kept.contains(message.id) {
+            #expect(bounded.memory.records.contains { $0.id == "message:\(message.id)" && $0.category == .message })
+        }
+        #expect(bounded.memory.records.count == request.memory.records.count + 12 - bounded.recentMessages.count)
+    }
+
+    @Test func fallbackBranchesKeepEarlierCoverageNotice() async throws {
+        var request = try request()
+        request.memory.lookupNotice = "Older excerpts were omitted."
+        let bad = StubProvider(responses: [StubProvider.reply("not JSON")])
+        let selected = try await ContextSelector.select(request, provider: bad)
+        #expect(selected.request.memory.lookupNotice.hasPrefix("Older excerpts were omitted."))
+        #expect(selected.request.memory.lookupNotice.contains("locally matched history was used"))
+        let invalid = StubProvider(responses: [StubProvider.reply(#"{"record_ids":["nope"],"categories":[]}"#)])
+        let second = try await ContextSelector.select(request, provider: invalid)
+        #expect(second.request.memory.lookupNotice.hasPrefix("Older excerpts were omitted."))
+        #expect(second.request.memory.lookupNotice.contains("No valid records"))
+        var tiny = StubProvider.capable; tiny.maxContextTokens = 100
+        let none = try await ContextSelector.select(request, provider: StubProvider(capabilities: tiny, responses: []))
+        #expect(none.request.memory.lookupNotice.hasPrefix("Older excerpts were omitted."))
+        #expect(none.request.memory.lookupNotice.contains("did not fit"))
+    }
 }

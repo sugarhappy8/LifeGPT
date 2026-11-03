@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct TurnResult: Equatable, Sendable {
     public enum Kind: Equatable, Sendable { case narrated, outOfCharacter, ignored }
@@ -94,6 +97,7 @@ public actor TurnProcessor {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
+                if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
                 throw TurnError.validationFailed(reasons: allRejections + ["Repair failed: \(String(error.localizedDescription.prefix(200)))"])
             }
         }
@@ -114,6 +118,7 @@ public actor TurnProcessor {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
+                if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
                 // The first reply is invalid. A failed repair cannot make any of its changes safe to commit.
                 throw TurnError.validationFailed(reasons: evaluation.rejections + ["Repair failed: \(String(error.localizedDescription.prefix(200)))"])
             }
