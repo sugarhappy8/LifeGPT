@@ -133,4 +133,15 @@ struct FiscalTests {
             try FiscalRuleResolver.resolve(jurisdiction: JurisdictionRef(countryID: "FR"), on: profile.date, accountingCurrency: "XYZ", minorUnitsPerUnit: 100)
         }
     }
+
+    @Test func eraScaleIsConstantWithinANonCalendarPersonalTaxYear() throws {
+        func gb(_ d: GameDate) throws -> FiscalProfile {
+            try FiscalRuleResolver.resolve(jurisdiction: JurisdictionRef(countryID: "GB", subdivisionID: "GB-ENG"), on: d, accountingCurrency: "GBP", minorUnitsPerUnit: 100)
+        }
+        let dec = try gb(GameDate(year: 2025, month: 12, day: 1)), jan = try gb(GameDate(year: 2026, month: 1, day: 1))
+        let apr = try gb(GameDate(year: 2025, month: 4, day: 6)), next = try gb(GameDate(year: 2026, month: 4, day: 6))
+        #expect(dec.annualAllowanceMinor == jan.annualAllowanceMinor && dec.incomeBrackets == jan.incomeBrackets)
+        #expect(dec.annualAllowanceMinor == apr.annualAllowanceMinor)
+        #expect(next.annualAllowanceMinor > jan.annualAllowanceMinor)
+    }
 }

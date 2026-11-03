@@ -291,4 +291,41 @@ struct BusinessSimulationTests {
         #expect(resumed.ledger.contains { $0.accountId == "personal" && $0.amountMinor > 0 })
         #expect(resumed.ledger.filter { $0.sourceType == .transfer }.reduce(0) { $0 + $1.amountMinor } == 0)
     }
+
+    @Test func outOfOrderObligationChangesApplyInDateOrderWithoutOverlap() throws {
+        let prepared = try setup(salary: 0)
+        let jan10 = GameDate(iso: "2004-01-10")!, jan20 = GameDate(iso: "2004-01-20")!
+        let changed = try BusinessEngine.prepare(state: prepared.state, accounts: prepared.accounts, start: jan, end: feb, economy: economy,
+            obligationChanges: [ObligationChange(action: .change, id: "revenue", monthlyMinor: 9_300_000, effectiveFrom: jan20.iso),
+                                ObligationChange(action: .change, id: "revenue", monthlyMinor: 6_200_000, effectiveFrom: jan10.iso)], revision: 2)
+        #expect(changed.rejections.isEmpty)
+        let versions = changed.state.obligations.filter { $0.id == "revenue" }.sorted { $0.effectiveFrom < $1.effectiveFrom }
+        for (a, b) in zip(versions, versions.dropFirst()) { #expect(a.endedOn != nil && a.endedOn! <= b.effectiveFrom) }
+        let result = try BusinessEngine.settle(state: changed.state, accounts: changed.accounts, from: jan, to: feb, economy: economy)
+        let expected: Int64 = 5_000_000 * 9 / 31 + 6_200_000 * 10 / 31 + 9_300_000 * 12 / 31
+        #expect(abs((result.state.assessments.first?.revenueMinor ?? 0) - expected) <= 3)
+    }
+
+    @Test func endListedAfterLaterDatedChangeStillEndsEveryActiveVersion() throws {
+        let prepared = try setup(salary: 0)
+        let jan10 = GameDate(iso: "2004-01-10")!, jan20 = GameDate(iso: "2004-01-20")!
+        let changed = try BusinessEngine.prepare(state: prepared.state, accounts: prepared.accounts, start: jan, end: feb, economy: economy,
+            obligationChanges: [ObligationChange(action: .change, id: "revenue", monthlyMinor: 620_000, effectiveFrom: jan20.iso),
+                                ObligationChange(action: .end, id: "revenue", effectiveFrom: jan10.iso)], revision: 2)
+        #expect(changed.state.obligations.filter { $0.id == "revenue" }.allSatisfy { $0.endedOn != nil && $0.endedOn! <= jan20 })
+        let result = try BusinessEngine.settle(state: changed.state, accounts: changed.accounts, from: jan, to: feb, economy: economy)
+        let ended: Int64 = 5_000_000 * 9 / 31
+        #expect(result.state.assessments.first?.revenueMinor == ended)
+    }
+
+    @Test func invalidBirthDateOnChangeIsRejectedInsteadOfKeepingTheOldOne() throws {
+        let prepared = try BusinessEngine.prepare(state: try setup().state, accounts: try setup().accounts, start: jan, end: jan, economy: economy,
+            obligationChanges: [ObligationChange(action: .start, id: "emp", businessId: "vidshare", kind: .payroll, name: "Worker",
+                monthlyMinor: 300_000, employeeBirthDate: "1980-01-01", monthlyHours: 160)], revision: 2)
+        #expect(prepared.rejections.isEmpty)
+        let bad = try BusinessEngine.prepare(state: prepared.state, accounts: prepared.accounts, start: jan, end: jan, economy: economy,
+            obligationChanges: [ObligationChange(action: .change, id: "emp", employeeBirthDate: "2010-13-45")], revision: 3)
+        #expect(bad.rejections.contains { $0.contains("birth date") })
+        #expect(bad.state.obligations.filter { $0.id == "emp" }.count == 1)
+    }
 }

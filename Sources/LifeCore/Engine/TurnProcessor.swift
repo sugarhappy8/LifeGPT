@@ -235,7 +235,8 @@ public actor TurnProcessor {
         let income = IncomeEngine.plan(changes: resolution.incomeStreams, existing: truth.incomeStreams,
             start: start, end: evaluation.newDate, economy: truth.economy, playStyle: truth.playStyle,
             accounts: prepared.accounts, paths: oldPaths + newPaths, rules: rules, personalAccountId: prepared.state.defaultPersonalAccountId,
-            birthDate: truth.character.birthDate)
+            birthDate: truth.character.birthDate,
+            closingAccountIds: Set(prepared.state.pendingAccountChanges.filter { $0.action == .close }.map(\.accountId)))
         evaluation.streams = income.changes
         evaluation.rejections += income.rejections
         // Creating a managed business is an explicit accounting conversion, never

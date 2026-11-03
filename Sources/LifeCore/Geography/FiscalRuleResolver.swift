@@ -34,7 +34,16 @@ public enum FiscalRuleResolver {
         func usdMoney(_ units: Double) throws -> Int64 {
             try localMoney(units * (localRate ?? 1))
         }
-        let eraScale = pow(1.025, Double(max(-150, min(100, date.year - catalog.referenceYear))))
+        let personalYears: [String: (Int, Int, String)] = [
+            "GB": (4, 6, "https://www.gov.uk/government/publications/rates-and-allowances-income-tax/income-tax-rates-and-allowances-current-and-past"),
+            "NZ": (4, 1, "https://www.ird.govt.nz/income-tax/income-tax-for-individuals/what-happens-at-the-end-of-the-tax-year/timelines-at-the-end-of-the-tax-year"),
+            "AU": (7, 1, "https://my.gov.au/en/services/work/currently-employed/tax-when-you-work/tax-time"),
+            "ZA": (3, 1, "https://www.sars.gov.za/about/sars-tax-and-customs-system/"),
+            "IN": (4, 1, "https://www.incometax.gov.in/iec/foportal/help/all-topics/e-filing-services/objective-and-scope-new-act-faq")
+        ]
+        // The era scale year follows the personal tax year, so thresholds stay constant within it.
+        let scaleYear = personalYears[country.id].map { ($0.0, $0.1) > (date.month, date.day) ? date.year - 1 : date.year } ?? date.year
+        let eraScale = pow(1.025, Double(max(-150, min(100, scaleYear - catalog.referenceYear))))
         let annualScale = country.annualPerCapitaScaleUSD * eraScale
         let allowance = try usdMoney(annualScale * 0.2)
         var income = [TaxBracket(upToMinor: try usdMoney(annualScale), rateBasisPoints: 1000),
@@ -67,13 +76,6 @@ public enum FiscalRuleResolver {
         }
         if date.year > 2026 { assumptions.append("Projected rules for a future story year; no claim that future legislation is known.") }
 
-        let personalYears: [String: (Int, Int, String)] = [
-            "GB": (4, 6, "https://www.gov.uk/government/publications/rates-and-allowances-income-tax/income-tax-rates-and-allowances-current-and-past"),
-            "NZ": (4, 1, "https://www.ird.govt.nz/income-tax/income-tax-for-individuals/what-happens-at-the-end-of-the-tax-year/timelines-at-the-end-of-the-tax-year"),
-            "AU": (7, 1, "https://my.gov.au/en/services/work/currently-employed/tax-when-you-work/tax-time"),
-            "ZA": (3, 1, "https://www.sars.gov.za/about/sars-tax-and-customs-system/"),
-            "IN": (4, 1, "https://www.incometax.gov.in/iec/foportal/help/all-topics/e-filing-services/objective-and-scope-new-act-faq")
-        ]
         if let period = personalYears[country.id] {
             taxYearMonth = period.0; taxYearDay = period.1
             let temporal = (2024...2026).contains(date.year) ? "Personal-year boundary follows the cited national guidance." : "Historical/future personal-year boundary projected from the current convention; not verified for this era."

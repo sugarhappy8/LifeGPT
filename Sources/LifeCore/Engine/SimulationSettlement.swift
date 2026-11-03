@@ -20,7 +20,7 @@ enum SimulationSettlement {
         var holdings = positions
         var ledger = prepared.ledger
         var openings = prepared.accountOpenings
-        var rejections = prepared.rejections
+        var rejections: [String] = []  // prepared.rejections are already reported by the caller
         var cursor = character.currentDate
         var currentEconomy = economy
         let initialResidence = originalResidence
@@ -50,7 +50,7 @@ enum SimulationSettlement {
             }
             financial = try FinanceEngine.settle(to: next, character: segment, streams: availableStreams,
                 economy: currentEconomy, balance: 0, positions: holdings, paths: activePaths, household: household,
-                accounts: accounts, personalAccountId: business.defaultPersonalAccountId)
+                accounts: accounts, personalAccountId: business.defaultPersonalAccountId, pathSuppressionStreams: streams)
             ledger += financial.ledger; rejections += financial.rejections; holdings = financial.positions
             accounts = accounts.map { account in
                 var copy = account

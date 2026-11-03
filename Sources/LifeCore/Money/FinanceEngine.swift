@@ -23,7 +23,8 @@ public enum FinanceEngine {
     public static func settle(to end: GameDate, character: Character, streams: [IncomeStream],
                               economy: EconomyCard, balance: Int64, positions: [FinancialPosition],
                               paths: [OpportunityPath], household: HouseholdSupport = .independent,
-                              accounts: [BankAccount]? = nil, personalAccountId: String = "personal") throws -> Plan {
+                              accounts: [BankAccount]? = nil, personalAccountId: String = "personal",
+                              pathSuppressionStreams: [IncomeStream]? = nil) throws -> Plan {
         var plan = Plan(positions: positions, balance: balance,
             accountBalances: accounts.map { Dictionary(uniqueKeysWithValues: $0.filter(\.isAccessible).map { ($0.id, $0.balanceMinor) }) }, personalAccountId: personalAccountId)
         let payroll = TimeEngine.plan(days: end.daysSince(character.currentDate), character: character, streams: streams.filter { plan.accountBalances[$0.accountId] != nil }, economy: economy, household: household, personalAccountId: personalAccountId)
@@ -32,7 +33,7 @@ public enum FinanceEngine {
             for entry in payroll.filter({ $0.date == boundary && $0.amountMinor > 0 }) { try post(entry, to: &plan) }
             for path in paths where path.stage == .profit && path.stageStartedOn < boundary {
                 // A recorded stream replaces the legacy fixed path payout, including after it ends.
-                if streams.contains(where: { $0.startedOn <= boundary && ($0.pathId == path.id || ($0.kind == .business && $0.name.caseInsensitiveCompare(path.title) == .orderedSame)) }) { continue }
+                if (pathSuppressionStreams ?? streams).contains(where: { $0.startedOn <= boundary && ($0.pathId == path.id || ($0.kind == .business && $0.name.caseInsensitiveCompare(path.title) == .orderedSame)) }) { continue }
                 try post(entry(.businessProfit, economy.medianMonthlyIncomeMinor / 2, "Profit from \(path.title)", boundary, accountId: personalAccountId), to: &plan)
             }
             for index in plan.positions.indices {

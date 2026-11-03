@@ -17,7 +17,7 @@ public enum IncomeEngine {
                             start: GameDate, end: GameDate, economy: EconomyCard,
                             playStyle: PlayStyle, accounts: [BankAccount],
                             paths: [OpportunityPath], rules: MoneyRules = .v1, personalAccountId: String = "personal",
-                            birthDate: GameDate? = nil) -> Plan {
+                            birthDate: GameDate? = nil, closingAccountIds: Set<String> = []) -> Plan {
         var plan = Plan(streams: existing)
         guard end >= start else {
             plan.rejections.append("income_streams: effective dates require a nonnegative turn duration")
@@ -86,6 +86,9 @@ public enum IncomeEngine {
                 continue
             }
             let projected = resolved(change, current: current, date: date, personalAccountId: personalAccountId)
+            guard !closingAccountIds.contains(projected.accountId) else {
+                reject("income destination account is closed or scheduled to close: \(projected.accountId)"); continue
+            }
             guard accounts.contains(where: { $0.id == projected.accountId && $0.isAccessible && ($0.openedOn == nil || $0.openedOn! <= date) }) else {
                 reject("income destination account does not exist: \(projected.accountId)"); continue
             }
