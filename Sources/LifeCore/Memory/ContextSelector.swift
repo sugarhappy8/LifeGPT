@@ -78,7 +78,7 @@ public enum ContextSelector {
             index.removeLast()
         }
         guard !index.isEmpty else {
-            result.request.memory.lookupNotice = "The context-selection index did not fit; locally matched history was used."
+            result.request.memory.lookupNotice = appended(result.request.memory.lookupNotice, "The context-selection index did not fit; locally matched history was used.")
             return result
         }
         let offeredCount = index.count
@@ -101,7 +101,7 @@ public enum ContextSelector {
             // A response containing only invalid/foreign IDs is not permission
             // to erase useful deterministic history. An intentional empty reply is.
             if selected.isEmpty && (!selection.record_ids.isEmpty || !selection.categories.isEmpty) {
-                result.request.memory.lookupNotice = "No valid records were selected; locally matched history was used."
+                result.request.memory.lookupNotice = appended(result.request.memory.lookupNotice, "No valid records were selected; locally matched history was used.")
             } else {
                 result.request.memory.excerpts = selected.map(\.excerpt)
                 result.request.memory.lookupNotice = "Context selection supplied \(selected.count) dated records from this life. Current binding facts take precedence."
@@ -109,13 +109,15 @@ public enum ContextSelector {
         } catch is CancellationError { throw CancellationError() }
         catch {
             try Task.checkCancellation()
-            result.request.memory.lookupNotice = "The context-selection request could not be used; locally matched history was used."
+            result.request.memory.lookupNotice = appended(result.request.memory.lookupNotice, "The context-selection request could not be used; locally matched history was used.")
         }
         if offeredCount < request.memory.records.count {
             result.request.memory.lookupNotice += " The index contained the \(offeredCount) most relevant available records, not the full transcript."
         }
         return result
     }
+
+    private static func appended(_ existing: String, _ notice: String) -> String { existing.isEmpty ? notice : existing + " " + notice }
 
     public static func ranked(_ records: [ContextRecord], input: String) -> [ContextRecord] {
         let words = Set(input.lowercased().split(whereSeparator: { !$0.isLetter }).filter { $0.count > 2 })

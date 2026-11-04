@@ -291,4 +291,70 @@ struct BusinessSimulationTests {
         #expect(resumed.ledger.contains { $0.accountId == "personal" && $0.amountMinor > 0 })
         #expect(resumed.ledger.filter { $0.sourceType == .transfer }.reduce(0) { $0 + $1.amountMinor } == 0)
     }
+
+    @Test func outOfOrderObligationChangesApplyInDateOrderWithoutOverlap() throws {
+        let prepared = try setup(salary: 0)
+        let jan10 = GameDate(iso: "2004-01-10")!, jan20 = GameDate(iso: "2004-01-20")!
+        let changed = try BusinessEngine.prepare(state: prepared.state, accounts: prepared.accounts, start: jan, end: feb, economy: economy,
+            obligationChanges: [ObligationChange(action: .change, id: "revenue", monthlyMinor: 9_300_000, effectiveFrom: jan20.iso),
+                                ObligationChange(action: .change, id: "revenue", monthlyMinor: 6_200_000, effectiveFrom: jan10.iso)], revision: 2)
+        #expect(changed.rejections.isEmpty)
+        let versions = changed.state.obligations.filter { $0.id == "revenue" }.sorted { $0.effectiveFrom < $1.effectiveFrom }
+        for (a, b) in zip(versions, versions.dropFirst()) { #expect(a.endedOn != nil && a.endedOn! <= b.effectiveFrom) }
+        let result = try BusinessEngine.settle(state: changed.state, accounts: changed.accounts, from: jan, to: feb, economy: economy)
+        let expected: Int64 = 5_000_000 * 9 / 31 + 6_200_000 * 10 / 31 + 9_300_000 * 12 / 31
+        #expect(abs((result.state.assessments.first?.revenueMinor ?? 0) - expected) <= 3)
+    }
+
+    @Test func endListedAfterLaterDatedChangeStillEndsEveryActiveVersion() throws {
+        let prepared = try setup(salary: 0)
+        let jan10 = GameDate(iso: "2004-01-10")!, jan20 = GameDate(iso: "2004-01-20")!
+        let changed = try BusinessEngine.prepare(state: prepared.state, accounts: prepared.accounts, start: jan, end: feb, economy: economy,
+            obligationChanges: [ObligationChange(action: .change, id: "revenue", monthlyMinor: 620_000, effectiveFrom: jan20.iso),
+                                ObligationChange(action: .end, id: "revenue", effectiveFrom: jan10.iso)], revision: 2)
+        #expect(changed.state.obligations.filter { $0.id == "revenue" }.allSatisfy { $0.endedOn != nil && $0.endedOn! <= jan20 })
+        let result = try BusinessEngine.settle(state: changed.state, accounts: changed.accounts, from: jan, to: feb, economy: economy)
+        let ended: Int64 = 5_000_000 * 9 / 31
+        #expect(result.state.assessments.first?.revenueMinor == ended)
+    }
+
+    @Test func invalidBirthDateOnChangeIsRejectedInsteadOfKeepingTheOldOne() throws {
+        let prepared = try BusinessEngine.prepare(state: try setup().state, accounts: try setup().accounts, start: jan, end: jan, economy: economy,
+            obligationChanges: [ObligationChange(action: .start, id: "emp", businessId: "vidshare", kind: .payroll, name: "Worker",
+                monthlyMinor: 300_000, employeeBirthDate: "1980-01-01", monthlyHours: 160)], revision: 2)
+        #expect(prepared.rejections.isEmpty)
+        let bad = try BusinessEngine.prepare(state: prepared.state, accounts: prepared.accounts, start: jan, end: jan, economy: economy,
+            obligationChanges: [ObligationChange(action: .change, id: "emp", employeeBirthDate: "2010-13-45")], revision: 3)
+        #expect(bad.rejections.contains { $0.contains("birth date") })
+        #expect(bad.state.obligations.filter { $0.id == "emp" }.count == 1)
+    }
+}
+
+struct BusinessFormLogicTests {
+    @Test func fiscalOverridesAreLookedUpPerJurisdiction() {
+        var state = BusinessSimulationState()
+        let de = JurisdictionRef(countryID: "DE"), fr = JurisdictionRef(countryID: "FR")
+        state.fiscalOverrides = [BusinessFiscalOverride(jurisdiction: de, effectiveFrom: GameDate(iso: "2004-01-01")!, values: FiscalOverrides(businessTaxBasisPoints: 1200))]
+        #expect(state.currentFiscalOverrides(for: de)?.businessTaxBasisPoints == 1200)
+        #expect(state.currentFiscalOverrides(for: fr) == nil)
+        #expect(state.currentFiscalOverrides(for: nil) == nil)
+    }
+    @Test func closingTheDefaultAccountPicksAnotherDestinationAndReplacement() {
+        let a = BankAccount(id: "a", name: "A", kind: .personal), b = BankAccount(id: "b", name: "B", kind: .personal)
+        let biz = BankAccount(id: "biz", name: "Biz", kind: .business, businessId: "co")
+        let defaults = BusinessFormLogic.closeDefaults(accounts: [a, biz, b], closing: "a", preferred: "a")
+        #expect(defaults.destination == "biz" || defaults.destination == "b")
+        #expect(defaults.destination != "a")
+        #expect(defaults.replacement == "b")
+        #expect(BusinessFormLogic.closeDefaults(accounts: [a, b], closing: "a", preferred: "b").destination == "b")
+        let alone = BusinessFormLogic.closeDefaults(accounts: [a], closing: "a", preferred: "a")
+        #expect(alone.destination == "" && alone.replacement == "")
+    }
+    @Test func hiddenPayrollFieldsAreIgnoredForOtherKinds() throws {
+        let expense = try BusinessFormLogic.contractDetails(kind: .expense, birthDate: "junk", hours: "0")
+        #expect(expense.birthDate == nil && expense.monthlyHours == nil)
+        let payroll = try BusinessFormLogic.contractDetails(kind: .payroll, birthDate: "1990-01-01", hours: "160")
+        #expect(payroll.birthDate == "1990-01-01" && payroll.monthlyHours == 160)
+        #expect(throws: (any Error).self) { try BusinessFormLogic.contractDetails(kind: .ownerSalary, birthDate: "", hours: "abc") }
+    }
 }

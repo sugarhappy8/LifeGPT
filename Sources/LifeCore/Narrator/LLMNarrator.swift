@@ -19,8 +19,12 @@ public struct LLMNarrator: Narrator {
         let flatEnvelope = provider.capabilities.supportsJSONSchema && provider.capabilities.prefersFlatResponseSchema
         let schema = provider.capabilities.supportsJSONSchema ? (flatEnvelope ? OutputSchema.flatEnvelopeJSON : OutputSchema.json) : nil
         let formatOverhead = flatEnvelope ? OutputSchema.flatEnvelopeJSON + OutputSchema.flatEnvelopeInstructions : ""
+        // Two-step mode appends the prose draft after budgeting, so reserve its largest size (and the extraction
+        // instructions) now: trimming must happen before the paid prose call.
+        let draftBudget = min(outputBudget, max(1024, original.targetWords * 4))
+        let reserve = mode == .twoStep ? draftBudget * 4 / 3 + 150 : 0
         let preflight = try ContextBuilder.budget(original, contextTokens: provider.capabilities.maxContextTokens,
-                                               outputTokens: outputBudget, rejections: rejections, formatOverhead: formatOverhead)
+                                               outputTokens: outputBudget, rejections: rejections, formatOverhead: formatOverhead, reservedTokens: reserve)
         // Check essential context before spending anything on retrieval. Repairs
         // reuse this turn's selection without another provider call. The cache
         // contains at most one turn and requires an exact request identifier.
@@ -31,14 +35,14 @@ public struct LLMNarrator: Narrator {
             selection = try await ContextSelector.select(preflight, provider: provider)
         }
         let request = try ContextBuilder.budget(selection.request, contextTokens: provider.capabilities.maxContextTokens,
-                                               outputTokens: outputBudget, rejections: rejections, formatOverhead: formatOverhead)
+                                               outputTokens: outputBudget, rejections: rejections, formatOverhead: formatOverhead, reservedTokens: reserve)
         if !isRepair { await contextCache.store(request) }
         let prompt = PromptRenderer.render(request, rejections: rejections)
         var inputTokens = selection.inputTokens, outputTokens = selection.outputTokens
         var user = prompt.user
         if mode == .twoStep {
             let prose = try await provider.complete(ProviderRequest(system: prompt.system + "\nFor this drafting stage only, write the narrative prose, not JSON. All game and safety rules still apply.",
-                user: user, maxOutputTokens: min(outputBudget, max(1024, request.targetWords * 4)), jsonSchema: nil))
+                user: user, maxOutputTokens: draftBudget, jsonSchema: nil))
             try Self.check(prose)
             try ContentGuard.check(prose.text, characterAge: request.groundTruth.character.ageYears)
             inputTokens += prose.inputTokens; outputTokens += prose.outputTokens
@@ -64,7 +68,7 @@ public struct LLMNarrator: Narrator {
                 if let ordinary = try? OutputCoding.decoder.decode(TurnOutput.self, from: data) { output = ordinary }
                 else {
                     let envelope = try OutputCoding.decoder.decode(FlatEnvelope.self, from: data)
-                    let resolution = try OutputCoding.decoder.decode(Resolution.self, from: Data(envelope.resolution.utf8))
+                    let resolution = try OutputCoding.decoder.decode(Resolution.self, from: Data(Self.jsonObject(in: envelope.resolution).utf8))
                     output = TurnOutput(resolution: resolution, narration: envelope.narration,
                                         authorNotes: envelope.authorNotes, choices: envelope.choices)
                 }
@@ -91,12 +95,40 @@ public struct LLMNarrator: Narrator {
         switch response.stopReason {
         case .refusal: throw NarratorError.refused
         case .maxTokens: throw NarratorError.truncated
-        case .endTurn, .other: break
+        // pause_turn, model_context_window_exceeded, tool_calls and other unknown stops are not complete replies.
+        case .other: throw NarratorError.truncated
+        case .endTurn: break
         }
     }
+    /// The JSON object in a model reply: the trimmed text itself, else the first balanced top-level `{...}`
+    /// (string and escape aware) that parses, after dropping `<think>` blocks (fences and prose are skipped by the scan).
     static func jsonObject(in text: String) -> String {
-        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end else { return text }
-        return String(text[start...end])
+        func isObject(_ s: String) -> Bool { (try? JSONSerialization.jsonObject(with: Data(s.utf8))) is [String: Any] }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isObject(trimmed) { return trimmed }
+        let cleaned = trimmed.replacingOccurrences(of: #"(?s)<think>.*?</think>"#, with: "", options: .regularExpression)
+        let chars = Array(cleaned)
+        var i = 0
+        while i < chars.count {
+            guard chars[i] == "{" else { i += 1; continue }
+            var depth = 0, inString = false, escaped = false, end: Int?
+            var j = i
+            while j < chars.count {
+                let c = chars[j]
+                if inString { if escaped { escaped = false } else if c == "\\" { escaped = true } else if c == "\"" { inString = false } }
+                else if c == "\"" { inString = true }
+                else if c == "{" { depth += 1 }
+                else if c == "}" { depth -= 1; if depth == 0 { end = j; break } }
+                j += 1
+            }
+            if let end {
+                let candidate = String(chars[i...end])
+                if isObject(candidate) { return candidate }
+            }
+            i += 1
+        }
+        guard let start = text.firstIndex(of: "{"), let last = text.lastIndex(of: "}"), start < last else { return text }
+        return String(text[start...last])
     }
 }
 

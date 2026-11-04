@@ -119,7 +119,13 @@ extension LifeStore {
             guard !positions.contains(where: { ($0.accountId ?? "personal") == change.accountId && $0.principalMinor > 0 }),
                   !income.contains(where: { stream in
                     stream.accountId == change.accountId && stream.endedOn == nil &&
-                    !incomeChanges.contains(where: { $0.name == stream.name && $0.action == .end })
+                    !incomeChanges.contains(where: { end in
+                        // The stream must stop paying no later than the account closes; an omitted date means the turn's end.
+                        guard end.name == stream.name, end.action == .end else { return false }
+                        guard let closeOn = change.effectiveFrom else { return true }
+                        guard let endOn = end.effectiveFrom else { return false }
+                        return endOn <= closeOn
+                    })
                   }) else {
                 throw ValidationError.invalid("Resolve assets, loans, and legacy income linked to this account before closing it.")
             }

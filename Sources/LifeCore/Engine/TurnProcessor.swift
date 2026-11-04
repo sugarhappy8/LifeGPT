@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct TurnResult: Equatable, Sendable {
     public enum Kind: Equatable, Sendable { case narrated, outOfCharacter, ignored }
@@ -94,6 +97,7 @@ public actor TurnProcessor {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
+                if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
                 throw TurnError.validationFailed(reasons: allRejections + ["Repair failed: \(String(error.localizedDescription.prefix(200)))"])
             }
         }
@@ -114,6 +118,7 @@ public actor TurnProcessor {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
+                if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
                 // The first reply is invalid. A failed repair cannot make any of its changes safe to commit.
                 throw TurnError.validationFailed(reasons: evaluation.rejections + ["Repair failed: \(String(error.localizedDescription.prefix(200)))"])
             }
@@ -192,7 +197,8 @@ public actor TurnProcessor {
         var resolution = output.resolution
         resolution.castUpdates = resolution.castUpdates.map { original in
             var update = original
-            if let person = CastIdentity.resolve(update.name, in: truth.cast) { update.name = person.name }
+            let relation = update.relation?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let person = CastIdentity.resolve(update.name, in: truth.cast, relation: relation) { update.name = person.name }
             return update
         }
         let start = truth.character.currentDate
@@ -230,20 +236,15 @@ public actor TurnProcessor {
             businessChanges: resolution.businessChanges ?? [], obligationChanges: resolution.obligationChanges ?? [],
             accountChanges: resolution.accountChanges ?? [], saleProposals: resolution.saleProposals ?? [], revision: store.revision() + 1)
         evaluation.rejections += prepared.rejections
-        let newPaths = (resolution.pathUpdates ?? []).filter { update in !oldPaths.contains { $0.id == update.id } }
-            .map { OpportunityPath(id: $0.id, title: $0.title, stage: $0.stage, startedOn: evaluation.newDate) }
+        let newPaths = (resolution.pathUpdates ?? []).filter { update in !oldPaths.contains { $0.id == PathEngine.normalizedID(update.id) } }
+            .map { OpportunityPath(id: PathEngine.normalizedID($0.id), title: $0.title, stage: $0.stage, startedOn: evaluation.newDate) }
         let income = IncomeEngine.plan(changes: resolution.incomeStreams, existing: truth.incomeStreams,
             start: start, end: evaluation.newDate, economy: truth.economy, playStyle: truth.playStyle,
-            accounts: prepared.accounts, paths: oldPaths + newPaths, rules: rules, personalAccountId: prepared.state.defaultPersonalAccountId)
+            accounts: prepared.accounts, paths: oldPaths + newPaths, rules: rules, personalAccountId: prepared.state.defaultPersonalAccountId,
+            birthDate: truth.character.birthDate,
+            closingAccountIds: Set(prepared.state.pendingAccountChanges.filter { $0.action == .close }.map(\.accountId)))
         evaluation.streams = income.changes
         evaluation.rejections += income.rejections
-        for change in income.changes where change.action != .end {
-            let date = change.effectiveFrom.flatMap(GameDate.init(iso:)) ?? evaluation.newDate
-            if truth.playStyle == .simulation, date.ageYears(bornOn: truth.character.birthDate) < 13,
-               change.kind == .wage || change.kind == .selfEmployment {
-                evaluation.rejections.append("income_streams: young children cannot hold jobs")
-            }
-        }
         // Creating a managed business is an explicit accounting conversion, never
         // an implicit second deposit over an existing net-income stream.
         let managed = Set(prepared.state.businesses.map(\.accountId))
@@ -327,8 +328,15 @@ public actor TurnProcessor {
             age: ageAtEnd, economy: truth.economy, balance: finances.balance, fate: fate, playStyle: truth.playStyle,
             personalAccountId: finances.personalAccountId)
         finances = try FinanceEngine.record(pathPlan.ledger, to: finances)
+        // Credit qualifies only on wages that were active before this turn and were not started, changed or ended in it,
+        // at their recorded pre-turn rate.
+        let touchedNames = Set(resolution.incomeStreams.map { $0.name.lowercased() })
+        let creditStreams = truth.incomeStreams.filter {
+            $0.kind == .wage && TimeEngine.isActive($0, on: start) && !touchedNames.contains($0.name.lowercased())
+        }
         finances = try FinanceEngine.actions(resolution.financialActions ?? [], date: evaluation.newDate,
-            age: ageAtEnd, economy: truth.economy, streams: income.streams, plan: finances, household: truth.household)
+            age: ageAtEnd, economy: truth.economy, streams: creditStreams,
+            plan: finances, household: truth.household)
         evaluation.payroll = finances.ledger; evaluation.positions = finances.positions; evaluation.paths = pathPlan.paths
         evaluation.rejections += pathPlan.rejections + finances.rejections
         return evaluation

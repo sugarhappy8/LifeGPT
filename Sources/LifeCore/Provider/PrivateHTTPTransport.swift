@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Ephemeral networking with no ambient cookies/credentials and no redirects to unselected destinations.
 public struct PrivateHTTPTransport: HTTPTransport {
@@ -15,7 +18,9 @@ public struct PrivateHTTPTransport: HTTPTransport {
         session = URLSession(configuration: configuration, delegate: NoRedirectDelegate(), delegateQueue: nil)
     }
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await session.data(for: request)
+        let data: Data, response: URLResponse
+        do { (data, response) = try await session.data(for: request) }
+        catch let error as URLError where error.code == .cancelled { throw CancellationError() }
         guard let http = response as? HTTPURLResponse, data.count <= 2_000_000 else { throw ProviderError.badResponse }
         return (data, http)
     }

@@ -82,6 +82,10 @@ struct BusinessManagerView: View {
         }
         return NSDecimalNumber(decimal: minor).int64Value
     }
+    private func resetCloseDefaults() {
+        let defaults = BusinessFormLogic.closeDefaults(accounts: snapshot.accessibleAccounts, closing: selectedAccount, preferred: snapshot.business.defaultPersonalAccountId)
+        closureDestination = defaults.destination; replacement = defaults.replacement
+    }
     private func unique(_ prefix: String) -> String { prefix + "-" + UUID().uuidString.lowercased() }
 
     var body: some View {
@@ -107,7 +111,8 @@ struct BusinessManagerView: View {
         }.padding(24).frame(width: 790, height: 790)
         .sheet(isPresented: $showTax) {
             FiscalProfileView(jurisdiction: taxProfileJurisdiction, date: date, economy: snapshot.economy,
-                currentOverrides: snapshot.business.fiscalOverrides.last { $0.jurisdiction.countryID == taxProfileJurisdiction?.countryID && $0.jurisdiction.subdivisionID == taxProfileJurisdiction?.subdivisionID }?.values) { ref, values in
+                currentOverrides: snapshot.business.currentFiscalOverrides(for: taxProfileJurisdiction),
+                overridesFor: { snapshot.business.currentFiscalOverrides(for: $0) }) { ref, values in
                 try model.updateFiscalProfile(jurisdiction: ref, values: values, lifeID: snapshot.character.id, revision: snapshot.revision)
             }
         }
@@ -116,7 +121,9 @@ struct BusinessManagerView: View {
             companyName = ""; obligationID = ""; retainedLiabilities = []
             resetPaymentDraft()
         }
-        .onChange(of: selectedAccount) { _, _ in accountName = "" }
+        .onChange(of: selectedAccount) { _, _ in accountName = ""; resetCloseDefaults() }
+        .onAppear { resetCloseDefaults() }
+        .onChange(of: obligationKind) { _, kind in if kind != .payroll && kind != .ownerSalary { birthDate = ""; hours = "" } }
         .onChange(of: obligationID) { _, id in
             guard let record = snapshot.currentObligations.first(where: { $0.id == id && $0.businessId == companyID }) else {
                 resetPaymentDraft(); return
@@ -247,14 +254,14 @@ struct BusinessManagerView: View {
                     guard let company else { throw ValidationError.invalid("Choose a company first.") }
                     let payroll = obligationKind == .payroll || obligationKind == .ownerSalary
                     guard !payroll || (workJurisdiction != nil && employeeTaxResidence != nil) else { throw ValidationError.invalid("Select the work jurisdiction and tax residence.") }
-                    if !hours.isEmpty && Int(hours) == nil { throw ValidationError.invalid("Contract hours must be a whole number.") }
+                    let contract = try BusinessFormLogic.contractDetails(kind: obligationKind, birthDate: birthDate, hours: hours)
                     let change = ObligationChange(action: obligationID.isEmpty ? .start : .change,
                         id: obligationID.isEmpty ? unique("payment") : obligationID, businessId: company.id,
                         kind: obligationKind, name: obligationName, monthlyMinor: try amount(monthly),
                         headcount: obligationKind == .payroll ? headcount : 1, fromAccountId: company.accountId,
                         toAccountId: [.ownerSalary, .transfer].contains(obligationKind) ? paymentDestination : nil,
                         jurisdiction: payroll ? workJurisdiction : company.jurisdiction(on: date), taxResidence: payroll ? employeeTaxResidence : nil,
-                        employeeBirthDate: birthDate.isEmpty ? nil : birthDate, monthlyHours: Int(hours), effectiveFrom: date.iso)
+                        employeeBirthDate: contract.birthDate, monthlyHours: contract.monthlyHours, effectiveFrom: date.iso)
                     try update(obligations: [change])
                 } }.buttonStyle(.borderedProminent)
                 if !obligationID.isEmpty {

@@ -37,7 +37,12 @@ public enum BusinessEngine {
             do { try apply(change, start: start, end: end, economy: economy, to: &plan) }
             catch { plan.rejections.append("business_changes \(change.id): \(error.localizedDescription)") }
         }
-        for change in obligationChanges {
+        // Apply in stable effective-date order so versions of one ID never overlap; invalid dates fail inside apply.
+        let ordered = obligationChanges.enumerated().sorted { a, b in
+            let da = a.element.effectiveFrom.flatMap(GameDate.init(iso:)) ?? start, db = b.element.effectiveFrom.flatMap(GameDate.init(iso:)) ?? start
+            return da != db ? da < db : a.offset < b.offset
+        }.map(\.element)
+        for change in ordered {
             do { try apply(change, start: start, end: end, economy: economy, to: &plan) }
             catch { plan.rejections.append("obligation_changes \(change.id): \(error.localizedDescription)") }
         }
@@ -128,7 +133,10 @@ public enum BusinessEngine {
         let priorIndex = plan.state.obligations.lastIndex { $0.id == change.id && $0.effectiveFrom <= date && ($0.endedOn == nil || date < $0.endedOn!) }
         if change.action == .end {
             guard let priorIndex else { throw invalid("There is no active obligation with this ID.") }
-            plan.state.obligations[priorIndex].endedOn = date; return
+            for i in plan.state.obligations.indices where plan.state.obligations[i].id == change.id && (plan.state.obligations[i].endedOn == nil || plan.state.obligations[i].endedOn! > date) {
+                plan.state.obligations[i].endedOn = date
+            }
+            return
         }
         if change.action == .start && plan.state.obligations.contains(where: { $0.id == change.id }) { throw invalid("Use change for an existing obligation ID.") }
         if change.action == .change && priorIndex == nil { throw invalid("There is no active obligation to change.") }
@@ -163,8 +171,12 @@ public enum BusinessEngine {
         let taxResidence = change.taxResidence ?? prior?.taxResidence
         if kind == .ownerSalary && taxResidence == nil { throw invalid("Owner salary needs the owner's preset tax residence; the company's location is not automatically the owner's residence.") }
         if let taxResidence { _ = try profile(taxResidence, on: date, economy: economy, state: plan.state) }
-        let birthDate = change.employeeBirthDate.flatMap(GameDate.init(iso:)) ?? prior?.employeeBirthDate
-        if change.employeeBirthDate != nil && birthDate == nil { throw invalid("Employee birth date must be a valid calendar date.") }
+        var newBirthDate: GameDate?
+        if let text = change.employeeBirthDate {
+            guard let parsed = GameDate(iso: text) else { throw invalid("Employee birth date must be a valid calendar date.") }
+            newBirthDate = parsed
+        }
+        let birthDate = newBirthDate ?? prior?.employeeBirthDate
         let hours = change.monthlyHours ?? prior?.monthlyHours
         if let hours, !(1...744).contains(hours) { throw invalid("Monthly work hours must be between 1 and 744.") }
         if kind == .payroll {

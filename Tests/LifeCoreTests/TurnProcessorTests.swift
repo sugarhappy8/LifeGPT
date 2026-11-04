@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Testing
 @testable import LifeCore
 
@@ -263,5 +266,12 @@ private func rejectionReasons(_ processor: TurnProcessor, _ text: String) async 
         #expect(try a.store.balanceMinor() == a.start + 5_000)
         #expect(try b.store.balanceMinor() == b.start)
         #expect(try b.store.castMembers().isEmpty); #expect(try b.store.recentMessages(limit: 5).isEmpty)
+    }
+
+    @Test func cancelledURLErrorDuringRepairIsCancellationNotValidationFailure() async throws {
+        let store = try TestChat.chat(try TestChat.library()).store
+        let narrator = ScriptedNarrator(narrate: [.failure(.malformedOutput("bad"))], repair: [.error(URLError(.cancelled))])
+        let processor = TurnProcessor(store: store, narrator: narrator, fate: FixedFate([42]))
+        await #expect(throws: CancellationError.self) { _ = try await processor.play("I wait.") }
     }
 }

@@ -14,13 +14,13 @@ public struct SessionSettings: Codable, Equatable, Sendable {
     public init(from decoder: any Decoder) throws {
         self.init()
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        voiceBible = try values.decodeIfPresent(String.self, forKey: .voiceBible) ?? voiceBible
-        automaticLength = try values.decodeIfPresent(Bool.self, forKey: .automaticLength) ?? automaticLength
-        contentTone = try values.decodeIfPresent(String.self, forKey: .contentTone) ?? contentTone
-        difficulty = min(100, max(0, try values.decodeIfPresent(Int.self, forKey: .difficulty) ?? 50))
-        household = try values.decodeIfPresent(HouseholdSupport.self, forKey: .household) ?? .automatic
-        playStyle = try values.decodeIfPresent(PlayStyle.self, forKey: .playStyle) ?? .simulation
-        contextLookupMode = try values.decodeIfPresent(ContextLookupMode.self, forKey: .contextLookupMode) ?? .automatic
+        voiceBible = (try? values.decodeIfPresent(String.self, forKey: .voiceBible)) ?? voiceBible
+        automaticLength = (try? values.decodeIfPresent(Bool.self, forKey: .automaticLength)) ?? automaticLength
+        contentTone = (try? values.decodeIfPresent(String.self, forKey: .contentTone)) ?? contentTone
+        difficulty = min(100, max(0, (try? values.decodeIfPresent(Int.self, forKey: .difficulty)) ?? 50))
+        household = (try? values.decodeIfPresent(HouseholdSupport.self, forKey: .household)) ?? .automatic
+        playStyle = (try? values.decodeIfPresent(PlayStyle.self, forKey: .playStyle)) ?? .simulation
+        contextLookupMode = (try? values.decodeIfPresent(ContextLookupMode.self, forKey: .contextLookupMode)) ?? .automatic
     }
 }
 

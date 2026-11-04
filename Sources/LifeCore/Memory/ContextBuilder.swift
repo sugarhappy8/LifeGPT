@@ -84,9 +84,9 @@ public enum ContextBuilder {
     public static func estimatedTokens(_ text: String) -> Int { (text.utf8.count + 2) / 3 }
 
     public static func budget(_ original: NarratorRequest, contextTokens: Int, outputTokens: Int,
-                              rejections: [String], formatOverhead: String = "") throws -> NarratorRequest {
+                              rejections: [String], formatOverhead: String = "", reservedTokens: Int = 0) throws -> NarratorRequest {
         var request = original
-        let available = max(0, contextTokens - outputTokens - 1000)
+        let available = max(0, contextTokens - outputTokens - 1000 - reservedTokens)
         request.groundTruth.cast = request.groundTruth.cast.sorted {
             let a = score($0.name + " " + ($0.notes ?? ""), matching: request.playerInput)
             let b = score($1.name + " " + ($1.notes ?? ""), matching: request.playerInput)
@@ -101,7 +101,15 @@ public enum ContextBuilder {
         // Trim auxiliary context, never the player's current input, identity, date or financial ground truth.
         let originalExcerptCount = request.memory.excerpts.count
         while size() > available && !request.memory.excerpts.isEmpty { request.memory.excerpts.removeLast() }
-        while size() > available && request.recentMessages.count > 2 { request.recentMessages.removeFirst() }
+        // Recent messages are left out of the record index because the prompt carries them. Once dropped
+        // from the prompt they must stay retrievable.
+        while size() > available && request.recentMessages.count > 2 {
+            let dropped = request.recentMessages.removeFirst()
+            if !request.memory.records.contains(where: { $0.id == "message:\(dropped.id)" }) {
+                request.memory.records.append(ContextRecord(id: "message:\(dropped.id)", category: .message, date: dropped.date,
+                                                           text: "\(dropped.role.rawValue): \(dropped.text)"))
+            }
+        }
         while size() > available && request.groundTruth.recentDecisions.count > 2 { request.groundTruth.recentDecisions.removeLast() }
         // Every active relationship and commitment remains binding, even when
         // its name is absent from the action. Never silently drop cast members.

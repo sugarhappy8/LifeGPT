@@ -131,6 +131,19 @@ import Testing
         #expect(narrator.repairCalls == 0)
     }
 
+    @Test func sameTurnPathIdIsNormalisedForLinkedBusinessStream() async throws {
+        let store = try TestChat.chat(TestChat.library()).store
+        var proposed = output("You open the cafe.", streams: [
+            .init(action: .start, name: "Cafe Inc", kind: .business, tier: nil, monthlyMinor: 1_000_000,
+                  accountId: "business", pathId: " Cafe ", effectiveFrom: "2020-01-01", reason: "Cafe earns a net profit.")])
+        proposed.resolution.accountOpenings = [businessAccount]
+        proposed.resolution.pathUpdates = [.init(id: "Cafe", title: "Cafe", stage: .idea)]
+        let narrator = ScriptedNarrator(narrate: [.output(proposed)])
+        let result = try await TurnProcessor(store: store, narrator: narrator, fate: FixedFate([42])).play("I open a cafe.")
+        #expect(!result.rejections.contains { $0.contains("linked opportunity path") })
+        #expect(try store.paths().map(\.id) == ["cafe"])
+    }
+
     @Test(arguments: [false, true])
     func failedRepairLeavesAllBankingStateUnchanged(_ repairTransportFails: Bool) async throws {
         let store = try TestChat.chat(TestChat.library()).store

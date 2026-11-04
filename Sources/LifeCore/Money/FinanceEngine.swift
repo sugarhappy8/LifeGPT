@@ -23,7 +23,8 @@ public enum FinanceEngine {
     public static func settle(to end: GameDate, character: Character, streams: [IncomeStream],
                               economy: EconomyCard, balance: Int64, positions: [FinancialPosition],
                               paths: [OpportunityPath], household: HouseholdSupport = .independent,
-                              accounts: [BankAccount]? = nil, personalAccountId: String = "personal") throws -> Plan {
+                              accounts: [BankAccount]? = nil, personalAccountId: String = "personal",
+                              pathSuppressionStreams: [IncomeStream]? = nil) throws -> Plan {
         var plan = Plan(positions: positions, balance: balance,
             accountBalances: accounts.map { Dictionary(uniqueKeysWithValues: $0.filter(\.isAccessible).map { ($0.id, $0.balanceMinor) }) }, personalAccountId: personalAccountId)
         let payroll = TimeEngine.plan(days: end.daysSince(character.currentDate), character: character, streams: streams.filter { plan.accountBalances[$0.accountId] != nil }, economy: economy, household: household, personalAccountId: personalAccountId)
@@ -32,7 +33,7 @@ public enum FinanceEngine {
             for entry in payroll.filter({ $0.date == boundary && $0.amountMinor > 0 }) { try post(entry, to: &plan) }
             for path in paths where path.stage == .profit && path.stageStartedOn < boundary {
                 // A recorded stream replaces the legacy fixed path payout, including after it ends.
-                if streams.contains(where: { $0.startedOn <= boundary && ($0.pathId == path.id || ($0.kind == .business && $0.name.caseInsensitiveCompare(path.title) == .orderedSame)) }) { continue }
+                if (pathSuppressionStreams ?? streams).contains(where: { $0.startedOn <= boundary && ($0.pathId == path.id || ($0.kind == .business && $0.name.caseInsensitiveCompare(path.title) == .orderedSame)) }) { continue }
                 try post(entry(.businessProfit, economy.medianMonthlyIncomeMinor / 2, "Profit from \(path.title)", boundary, accountId: personalAccountId), to: &plan)
             }
             for index in plan.positions.indices {
@@ -75,7 +76,11 @@ public enum FinanceEngine {
                   amount > 0, amount <= 1_000_000_000_000, plan.accountBalances[accountId] != nil else {
                 reject("needs a name, stable ID, known account and positive amount within 1 trillion minor units"); continue
             }
-            let index = plan.positions.firstIndex { $0.id == id }
+            var index = plan.positions.firstIndex { $0.id == id }
+            // A fully closed asset or investment frees its ID and its slot in the portfolio.
+            let closed = index.map { plan.positions[$0].principalMinor == 0 && [.asset, .investment].contains(plan.positions[$0].kind) } ?? false
+            let reopening = closed && [.buyAsset, .invest].contains(action.action)
+            if reopening { index = nil }
             if let index, (plan.positions[index].accountId ?? plan.personalAccountId) != accountId {
                 reject("this position belongs to a different account"); continue
             }
@@ -86,12 +91,13 @@ public enum FinanceEngine {
             switch action.action {
             case .buyAsset, .invest:
                 guard age >= 18 else { reject("a guardian controls major purchases and investments before 18"); continue }
-                guard index == nil, plan.positions.count < 100, cash >= amount else {
+                guard index == nil, plan.positions.filter({ $0.principalMinor > 0 }).count < 100, cash >= amount else {
                     reject("ID already exists, portfolio is full, or savings cannot cover this purchase"); continue
                 }
                 let kind: FinancialPosition.Kind = action.action == .invest ? .investment : .asset
-                plan.positions.append(FinancialPosition(id: id, name: name, kind: kind, principalMinor: amount,
-                    annualRateBPS: kind == .investment ? (date.year >= 1900 ? 300 : 100) : 0, openedOn: date, accountId: accountId))
+                let position = FinancialPosition(id: id, name: name, kind: kind, principalMinor: amount,
+                    annualRateBPS: kind == .investment ? (date.year >= 1900 ? 300 : 100) : 0, openedOn: date, accountId: accountId)
+                if reopening, let dead = plan.positions.firstIndex(where: { $0.id == id }) { plan.positions[dead] = position } else { plan.positions.append(position) }
                 try post(entry(.expense, -amount, "\(kind == .investment ? "Deposit into" : "Purchase of") \(name)", date, accountId: accountId), to: &plan)
             case .sellAsset, .withdraw:
                 guard let index else { reject("you do not own this position"); continue }
@@ -105,7 +111,7 @@ public enum FinanceEngine {
                 plan.positions[index].principalMinor -= amount
                 if proceeds > 0 { try post(entry(.assetSale, proceeds, "\(p.kind == .asset ? "Sale" : "Withdrawal"): \(p.name)", date, accountId: accountId), to: &plan) }
             case .borrow:
-                let monthly = try streams.filter { TimeEngine.isActive($0, on: date) && $0.accountId == accountId }.reduce(Int64(0)) { try CheckedMoney.add($0, $1.monthlyMinor) }
+                let monthly = try streams.filter { $0.kind == .wage && TimeEngine.isActive($0, on: date) && $0.accountId == accountId }.reduce(Int64(0)) { try CheckedMoney.add($0, $1.monthlyMinor) }
                 let spare = max(0, monthly - (accountId == plan.personalAccountId ? household.monthlyCost(economy: economy) : 0))
                 guard age >= 18, !borrowedThisTurn, index == nil,
                       !plan.positions.contains(where: { $0.isDebt && $0.principalMinor > 0 && plan.accountBalances[$0.accountId ?? plan.personalAccountId] != nil }),
@@ -126,6 +132,9 @@ public enum FinanceEngine {
             }
         }
         if actions.count > 12 { plan.rejections.append("At most twelve financial actions may happen in one turn.") }
+        // Closed rows only keep their ID reusable; retain the 50 most recent so the store's 200-row bound can never be reached.
+        let deadIndexes = plan.positions.indices.filter { plan.positions[$0].principalMinor == 0 && [.asset, .investment, .loan, .arrears].contains(plan.positions[$0].kind) }
+        if deadIndexes.count > 50 { let drop = Set(deadIndexes.dropLast(50)); plan.positions = plan.positions.enumerated().filter { !drop.contains($0.offset) }.map(\.element) }
         return plan
     }
 
@@ -140,6 +149,7 @@ public enum FinanceEngine {
             if missing > 0 {
                 if let index = plan.positions.firstIndex(where: { $0.id == "fine-arrears" }) {
                     guard plan.positions[index].kind == .arrears else { throw ValidationError.invalid("The reserved fine-arrears position has an invalid type.") }
+                    if plan.positions[index].principalMinor == 0 { plan.positions[index].accountId = plan.personalAccountId }
                     plan.positions[index].principalMinor = try CheckedMoney.add(plan.positions[index].principalMinor, missing)
                 } else {
                     plan.positions.append(FinancialPosition(id: "fine-arrears", name: "Unpaid fines", kind: .arrears, principalMinor: missing, openedOn: date, accountId: plan.personalAccountId))
@@ -162,6 +172,7 @@ public enum FinanceEngine {
             let shortage = -next
             if let index = plan.positions.firstIndex(where: { $0.id == "living-arrears" }) {
                 guard plan.positions[index].kind == .arrears else { throw ValidationError.invalid("The reserved living-arrears position has an invalid type.") }
+                if plan.positions[index].principalMinor == 0 { plan.positions[index].accountId = plan.personalAccountId }
                 plan.positions[index].principalMinor = try CheckedMoney.add(plan.positions[index].principalMinor, shortage)
             } else {
                 plan.positions.append(FinancialPosition(id: "living-arrears", name: "Unpaid living costs", kind: .arrears,

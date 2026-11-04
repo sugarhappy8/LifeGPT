@@ -17,6 +17,8 @@ public actor UsageTracker {
     private let url: URL
     private var records: [UsageRecord]
     private var reservations: [UUID: Double] = [:]
+    /// The last persistence error, if usage.json could not be written. Completed responses stay counted in memory.
+    public private(set) var writeFailure: String?
     public init(url: URL) throws {
         self.url = url
         if FileManager.default.fileExists(atPath: url.path) {
@@ -35,12 +37,17 @@ public actor UsageTracker {
         let id = UUID(); reservations[id] = estimatedUSD; return id
     }
     public func release(_ id: UUID) { reservations[id] = nil }
-    public func record(_ record: UsageRecord, reservation id: UUID) throws {
+    /// A paid response is always counted. A failed write is reported through `writeFailure`, never thrown,
+    /// and the next successful write persists every record kept in memory.
+    public func record(_ record: UsageRecord, reservation id: UUID) {
         reservations[id] = nil
         records.append(record)
-        let data = try JSONEncoder().encode(records)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: url, options: .atomic)
+        do {
+            let data = try JSONEncoder().encode(records)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            writeFailure = nil
+        } catch { writeFailure = error.localizedDescription }
     }
 }
 
@@ -62,14 +69,12 @@ public struct MeteredProvider: AIProvider {
         let inputEstimate = ContextBuilder.estimatedTokens(request.system + request.user + (request.jsonSchema ?? "")) + 1000
         let estimate = (Double(inputEstimate) * inputUSDPerMillion + Double(request.maxOutputTokens) * outputUSDPerMillion) / 1_000_000
         let id = try await tracker.reserve(estimatedUSD: estimate, dailyLimit: dailyLimit)
-        do {
-            let response = try await base.complete(request)
-            let cost = (Double(response.inputTokens) * inputUSDPerMillion + Double(response.outputTokens) * outputUSDPerMillion) / 1_000_000
-            try await tracker.record(UsageRecord(id: UUID(), date: Date(), provider: providerName, model: model,
-                inputTokens: response.inputTokens, outputTokens: response.outputTokens, estimatedUSD: cost, purpose: request.purpose), reservation: id)
-            return response
-        } catch {
-            await tracker.release(id); throw error
-        }
+        let response: ProviderResponse
+        do { response = try await base.complete(request) }
+        catch { await tracker.release(id); throw error }
+        let cost = (Double(response.inputTokens) * inputUSDPerMillion + Double(response.outputTokens) * outputUSDPerMillion) / 1_000_000
+        await tracker.record(UsageRecord(id: UUID(), date: Date(), provider: providerName, model: model,
+            inputTokens: response.inputTokens, outputTokens: response.outputTokens, estimatedUSD: cost, purpose: request.purpose), reservation: id)
+        return response
     }
 }

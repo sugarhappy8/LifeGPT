@@ -43,6 +43,27 @@ struct AppSettings: Codable, Equatable {
     }
 }
 
+extension AppSettings {
+    private enum Keys: String, CodingKey {
+        case provider, anthropicModel, geminiModel, localModel, localServer, contextTokens, localStructuredOutput, localTwoStep,
+             cloudTwoStep, dailyLimitUSD, inputUSDPerMillion, outputUSDPerMillion, appearance, readingSize, showSuggestions
+    }
+    /// Tolerant decoding: a missing or malformed field falls back to its default so older or damaged files still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        func value<T: Decodable>(_ key: Keys, _ fallback: T) -> T { (try? c.decodeIfPresent(T.self, forKey: key)) ?? fallback }
+        let d = AppSettings()
+        provider = value(.provider, d.provider); anthropicModel = value(.anthropicModel, d.anthropicModel)
+        geminiModel = value(.geminiModel, d.geminiModel); localModel = value(.localModel, d.localModel)
+        localServer = value(.localServer, d.localServer); contextTokens = value(.contextTokens, d.contextTokens)
+        localStructuredOutput = value(.localStructuredOutput, d.localStructuredOutput); localTwoStep = value(.localTwoStep, d.localTwoStep)
+        cloudTwoStep = value(.cloudTwoStep, d.cloudTwoStep); dailyLimitUSD = value(.dailyLimitUSD, d.dailyLimitUSD)
+        inputUSDPerMillion = value(.inputUSDPerMillion, d.inputUSDPerMillion); outputUSDPerMillion = value(.outputUSDPerMillion, d.outputUSDPerMillion)
+        appearance = value(.appearance, d.appearance); readingSize = value(.readingSize, d.readingSize)
+        showSuggestions = value(.showSuggestions, d.showSuggestions)
+    }
+}
+
 struct AppPaths {
     let root: URL
     var chats: URL { root.appendingPathComponent("Lives", isDirectory: true) }

@@ -44,16 +44,21 @@ final class AppModel {
 
     init(paths suppliedPaths: AppPaths? = nil, narratorFactory: (() throws -> any Narrator)? = nil) {
         self.narratorFactory = narratorFactory
-        do {
-            let paths = try suppliedPaths ?? AppPaths(); self.paths = paths
-            library = try ChatLibrary(directory: paths.chats)
-            tracker = try UsageTracker(url: paths.usage)
+        // Each startup step is independent: a bad settings or usage file must not hide saved lives.
+        var problems: [String] = []
+        func step(_ label: String, _ body: () throws -> Void) { do { try body() } catch { problems.append(label + error.localizedDescription) } }
+        guard let paths = try? suppliedPaths ?? AppPaths() else { self.error = "The settings folder is unavailable."; return }
+        self.paths = paths
+        step("") { library = try ChatLibrary(directory: paths.chats) }
+        step("Usage history could not be read; spending totals may be incomplete. ") { tracker = try UsageTracker(url: paths.usage) }
+        step("Settings could not be read; defaults are in use. ") {
             if FileManager.default.fileExists(atPath: paths.settings.path) {
                 settings = try JSONDecoder().decode(AppSettings.self, from: Data(contentsOf: paths.settings))
             }
-            try refreshLibrary()
-            if let id = lives.first?.id { openLife(id) }
-        } catch { self.error = error.localizedDescription }
+        }
+        step("") { try refreshLibrary() }
+        if let id = lives.first?.id { openLife(id); if let opened = self.error { problems.append(opened) } }
+        self.error = problems.isEmpty ? nil : problems.joined(separator: "\n")
     }
     var filteredLives: [ChatSummary] {
         search.isEmpty ? lives : lives.filter { $0.characterName.localizedCaseInsensitiveContains(search) }
@@ -122,9 +127,10 @@ final class AppModel {
     func saveSettings(_ new: AppSettings, key: String?) throws {
         try new.validate()
         guard let paths else { throw ValidationError.invalid("The settings folder is unavailable.") }
-        if let key, new.usesCloud { try KeychainStore.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: new.provider.rawValue) }
+        // nil key means "unchanged". Settings are written first so a failed write never leaves a half-applied key.
         try JSONEncoder().encode(new).write(to: paths.settings, options: .atomic)
         settings = new
+        if let key, new.usesCloud { try KeychainStore.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: new.provider.rawValue) }
     }
     func provider(using config: AppSettings? = nil, keyOverride: String? = nil) throws -> any AIProvider {
         let config = config ?? settings
@@ -138,8 +144,8 @@ final class AppModel {
             return try LocalProvider(baseURL: url, model: config.localModel, contextTokens: config.contextTokens,
                 structuredOutput: config.localStructuredOutput, transport: transport)
         case .anthropic, .gemini:
-            let key = try keyOverride ?? KeychainStore.read(config.provider.rawValue)
-            guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ValidationError.invalid("Add your \(config.provider.title) API key in Settings first.") }
+            let key = try (keyOverride ?? KeychainStore.read(config.provider.rawValue)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { throw ValidationError.invalid("Add your \(config.provider.title) API key in Settings first.") }
             if config.provider == .anthropic {
                 base = AnthropicProvider(apiKey: key, model: config.anthropicModel, useRefusalFallback: false, transport: transport)
             } else { base = GeminiProvider(apiKey: key, model: config.geminiModel, contextTokens: 128_000, transport: transport) }
@@ -148,7 +154,11 @@ final class AppModel {
         return MeteredProvider(base: base, tracker: tracker, providerName: config.provider.rawValue, model: config.model,
             inputUSDPerMillion: config.inputUSDPerMillion, outputUSDPerMillion: config.outputUSDPerMillion, dailyLimit: config.dailyLimitUSD)
     }
-    func refreshUsage() async { if let tracker { usage = await tracker.history() } }
+    func refreshUsage() async {
+        guard let tracker else { return }
+        usage = await tracker.history()
+        if let failure = await tracker.writeFailure, information == nil { information = "Usage history could not be saved (\(failure)). Responses are still counted until the app closes." }
+    }
     func testConnection(config: AppSettings, key: String) async throws -> String {
         if config.provider == .demo { return "The offline demo is ready. No network connection is needed." }
         let provider = try provider(using: config, keyOverride: key)
@@ -179,6 +189,8 @@ final class AppModel {
         guard !busy, let store, let selection, let snapshot, !snapshot.ended else { return }
         let text = (suggestion ?? composer).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        // Pressing Send on a refilled failed/cancelled skip keeps its engine-enforced duration.
+        let skipTime = skipTime ?? (suggestion == nil && failedTurn?.text == text && failedTurn?.lifeID == selection ? failedTurn?.skipTime : nil)
         clearFailedTurn()
         if case .outOfCharacter(let question) = IntentGuard.classify(text) {
             do {
@@ -189,7 +201,7 @@ final class AppModel {
                     information = "Reply length is now about \(length) words."
                     try reload()
                 } else { information = try OOCResponder.answer(question, store: store) }
-                composer = ""
+                if suggestion == nil { composer = "" }
             } catch { self.error = error.localizedDescription }
             return
         }
@@ -197,20 +209,20 @@ final class AppModel {
             let attempt = TurnAttempt(lifeID: selection, revision: try store.revision(), text: text,
                 skipTime: skipTime, targetWords: quickLength > 0 ? quickLength : snapshot.character.replyLengthWords,
                 lengthChoice: quickLength)
-            submit(attempt)
+            submit(attempt, fromComposer: suggestion == nil)
         } catch { self.error = error.localizedDescription }
     }
 
     func retryTurn() {
         guard canRetry, let attempt = failedTurn else { return }
-        submit(attempt)
+        submit(attempt, fromComposer: composer == attempt.text)
     }
 
     func dismissError() { error = nil; clearFailedTurn() }
 
     private func clearFailedTurn() { failedTurn = nil; validationDetails = [] }
 
-    private func submit(_ attempt: TurnAttempt) {
+    private func submit(_ attempt: TurnAttempt, fromComposer: Bool) {
         guard !busy, let store, selection == attempt.lifeID, snapshot?.ended == false else { return }
         let narrator: any Narrator
         do {
@@ -229,29 +241,25 @@ final class AppModel {
         } catch { self.error = error.localizedDescription; return }
         let processor = TurnProcessor(store: store, narrator: narrator, fate: SeededFate(seed: UInt64.random(in: .min ... .max)))
         clearFailedTurn()
-        busy = true; pendingText = attempt.text; composer = ""; error = nil; information = nil
+        busy = true; pendingText = attempt.text; if fromComposer { composer = "" }; error = nil; information = nil
         quickLength = attempt.lengthChoice
         turnTask = Task {
             defer { busy = false; pendingText = nil; turnTask = nil }
             do {
                 let result = try await processor.play(attempt.text, targetWords: attempt.targetWords, skipTime: attempt.skipTime)
                 if !result.contextNotice.isEmpty { information = result.contextNotice }
-            } catch is CancellationError {
-                composer = attempt.text; information = "The reply was cancelled. Your life was not changed."
+            } catch let error where Self.isCancellation(error) {
+                if fromComposer || composer.isEmpty { composer = attempt.text }
+                information = "The reply was cancelled. Your life was not changed."
+                if (try? store.revision()) == attempt.revision { failedTurn = attempt }
                 await refreshUsage()
                 return
             } catch {
-                composer = attempt.text
+                if fromComposer || composer.isEmpty { composer = attempt.text }
                 self.error = error.localizedDescription
-                if let turnError = error as? TurnError {
-                    switch turnError {
-                    case .validationFailed(let reasons): validationDetails = reasons
-                    case .narratorFailed: break
-                    case .refused: await refreshUsage(); return
-                    }
-                    // A stale save is never replayed, even if an external writer changed it mid-request.
-                    if (try? store.revision()) == attempt.revision { failedTurn = attempt }
-                }
+                if case let turnError as TurnError = error, case .validationFailed(let reasons) = turnError { validationDetails = reasons }
+                // A stale save is never replayed, even if an external writer changed it mid-request.
+                if (try? store.revision()) == attempt.revision { failedTurn = attempt }
                 await refreshUsage()
                 return
             }
@@ -262,13 +270,16 @@ final class AppModel {
             await refreshUsage()
         }
     }
+    private static func isCancellation(_ error: Error) -> Bool { error is CancellationError || (error as? URLError)?.code == .cancelled }
     func cancelTurn() { turnTask?.cancel() }
     func saveStorySettings(_ settings: SessionSettings, swing: Int, words: Int) throws {
         guard !busy else { throw ValidationError.invalid("Wait for the current turn to finish.") }
-        try store?.updateSettings(settings, swingDial: swing, replyLengthWords: words); try reload()
+        guard let store else { throw ValidationError.invalid("Open a life first.") }
+        try store.updateSettings(settings, swingDial: swing, replyLengthWords: words); try reload()
     }
     func updateWorld(text: String, location: String, economy: EconomyCard, jurisdiction: JurisdictionRef? = nil, lifeID: UUID? = nil, revision: Int? = nil) throws {
-        guard !busy, let store, let snapshot else { return }
+        guard !busy else { throw ValidationError.invalid("Wait for the current turn to finish.") }
+        guard let store, let snapshot else { throw ValidationError.invalid("Open a life first.") }
         guard lifeID == nil || snapshot.character.id == lifeID else { throw ValidationError.invalid("Reopen the world editor for the current life.") }
         try store.saveWorld(brief: PlaceTimeBrief(date: snapshot.character.currentDate, location: location, text: text), economy: economy,
             jurisdiction: jurisdiction, expectedRevision: revision)
@@ -277,8 +288,10 @@ final class AppModel {
     func deleteLife(_ id: UUID) {
         guard !busy else { return }
         do {
+            // Delete first: a failed delete must leave the open life untouched.
+            try library?.deleteChat(id: id)
             if selection == id { clearFailedTurn(); store = nil; snapshot = nil; selection = nil }
-            try library?.deleteChat(id: id); try refreshLibrary()
+            try refreshLibrary()
             if selection == nil, let next = lives.first?.id { openLife(next) }
         } catch { self.error = error.localizedDescription }
         deleteCandidate = nil

@@ -430,4 +430,41 @@ import Testing
         #expect(assessment.profiles.allSatisfy { $0.conversion.accountingUnitsPerLocalUnit == 0.02 })
         #expect(try store.economy().monthlyLivingCostMinor == expected.monthlyLivingCostMinor)
     }
+
+    @Test func businessAndSaleRejectionsAppearExactlyOnce() async throws {
+        let (_, _, store) = try chat()
+        var proposed = output("You try to sell a company that does not exist.")
+        proposed.resolution.saleProposals = [SaleProposal(id: "ghost_sale", businessId: "ghost", buyer: "Buyer", priceMinor: 1_000_000,
+            effectiveFrom: start.iso, ownerJurisdiction: texas)]
+        let narrator = ScriptedNarrator(narrate: [.output(proposed)], repair: [.output(proposed)])
+        do { _ = try await TurnProcessor(store: store, narrator: narrator, fate: FixedFate([50])).play("Sell the ghost company."); Issue.record("Expected a failure") }
+        catch TurnError.validationFailed(let reasons) { #expect(reasons.filter { $0.hasPrefix("sale_proposals ghost_sale") }.count == 1) }
+    }
+
+    @Test func pathPayoutStaysSuppressedAfterLinkedStreamConvertsToManagedBusiness() throws {
+        let cafe = BankAccount(id: "cafe", name: "Cafe", kind: .business)
+        let personal = BankAccount(id: "personal", name: "Personal", kind: .personal, balanceMinor: 0)
+        var state = BusinessSimulationState()
+        state.businesses = [BusinessRecord(id: "cafeco", name: "Cafe Co", accountId: "cafe", jurisdiction: texas, openedOn: start.adding(months: 1))]
+        let prepared = BusinessEngine.Plan(state: state, accounts: [personal, cafe])
+        var stream = IncomeStream(name: "Cafe profit", kind: .business, tier: nil, monthlyMinor: 100_000, startedOn: start, accountId: "cafe", pathId: "cafe")
+        stream.endedOn = start.adding(months: 1)
+        let path = OpportunityPath(id: "cafe", title: "Cafe launch", stage: .profit, startedOn: start)
+        var character = Character(from: TestChat.newCharacter(name: "Cafe owner", age: 30, birthYear: 1974)); character.currentDate = start
+        let result = try SimulationSettlement.run(prepared: prepared, character: character, end: start.adding(months: 4),
+            streams: [stream], economy: .sampleUS2005, positions: [], paths: [path], household: .independent)
+        #expect(!result.finances.ledger.contains { $0.reason.hasPrefix("Profit from Cafe launch") && $0.date > start.adding(months: 1) })
+    }
+
+    @Test func streamStartedIntoAccountWithScheduledClosureIsRejected() async throws {
+        let (_, _, store) = try chat()
+        try BankingEngine.manage(store: store, openings: [.init(id: "sav", name: "Savings", kind: .savings)], changes: [], transfers: [], expectedRevision: store.revision())
+        var proposed = output("You close savings and start a gig into it.", time: .init(unit: .months, amount: 3))
+        proposed.resolution.accountChanges = [AccountLifecycleChange(action: .close, accountId: "sav", balanceDestinationAccountId: "personal", effectiveFrom: "2004-02-15")]
+        proposed.resolution.incomeStreams = [IncomeStreamChange(action: .start, name: "Gig", kind: .wage, tier: nil, monthlyMinor: 200_000, accountId: "sav", effectiveFrom: "2004-02-20")]
+        let narrator = ScriptedNarrator(narrate: [.output(proposed)], repair: [.output(proposed)])
+        do { _ = try await TurnProcessor(store: store, narrator: narrator, fate: FixedFate([50])).play("Do it."); Issue.record("Expected a failure") }
+        catch TurnError.validationFailed(let reasons) { #expect(reasons.contains { $0.contains("Gig") && $0.contains("clos") }) }
+        #expect(try store.incomeStreams().isEmpty)
+    }
 }

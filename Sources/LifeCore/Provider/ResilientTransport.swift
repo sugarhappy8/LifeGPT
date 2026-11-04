@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public enum HTTPResponseCheck {
     public static func validate(_ data: Data, response: HTTPURLResponse, secrets: [String]) throws {
@@ -15,7 +18,9 @@ public struct ResilientTransport: HTTPTransport {
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         for attempt in 0...2 {
             try Task.checkCancellation()
-            let response = try await base.send(request)
+            let response: (Data, HTTPURLResponse)
+            do { response = try await base.send(request) }
+            catch let error as URLError where error.code == .cancelled { throw CancellationError() }
             let code = response.1.statusCode
             guard attempt < 2, [429, 500, 502, 503, 504, 529].contains(code) else { return response }
             let suggested = Double(response.1.value(forHTTPHeaderField: "Retry-After") ?? "") ?? Double(attempt + 1)
